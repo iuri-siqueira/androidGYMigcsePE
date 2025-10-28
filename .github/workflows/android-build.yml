@@ -1,4 +1,4 @@
-  name: Build Android APK
+ name: Build Android APK
   on:
     push:
       branches: [ main ]
@@ -26,12 +26,17 @@
           mkdir -p $HOME/.buildozer/android/platform
           wget -q https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip
           unzip -q commandlinetools-linux-11076708_latest.zip -d $HOME/.buildozer/android/platform/
-          mv $HOME/.buildozer/android/platform/cmdline-tools $HOME/.buildozer/android/platform/android-sdk/
+          mkdir -p $HOME/.buildozer/android/platform/android-sdk/cmdline-tools
+          mv $HOME/.buildozer/android/platform/cmdline-tools $HOME/.buildozer/android/platform/android-sdk/cmdline-tools/latest
+          export ANDROID_HOME=$HOME/.buildozer/android/platform/android-sdk
+          export PATH=$PATH:$ANDROID_HOME/cmdline-tools/latest/bin
+          yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses
+          $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager "platform-tools" "platforms;android-29" "build-tools;29.0.3"
 
       - name: Build APK
         run: |
           export ANDROID_HOME=$HOME/.buildozer/android/platform/android-sdk
-          export PATH=$PATH:$ANDROID_HOME/bin
+          export PATH=$PATH:$ANDROID_HOME/cmdline-tools/latest/bin:$ANDROID_HOME/platform-tools
           buildozer android debug
 
       - name: Upload APK
