@@ -1,0 +1,22 @@
+  name: Build GYM APK
+  on: [workflow_dispatch]
+
+  jobs:
+    build:
+      runs-on: ubuntu-latest
+      steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+      - run: |
+          sudo apt-get update
+          sudo apt-get install -y git zip unzip openjdk-17-jdk
+          pip install buildozer cython
+          sed -i 's/android.ndk = 23b/android.ndk = 25b/' buildozer.spec
+          sed -i 's/android.api = 29/android.api = 30/' buildozer.spec
+          buildozer android debug
+      - uses: actions/upload-artifact@v4
+        with:
+          name: gym-apk
+          path: bin/*.apk
