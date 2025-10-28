@@ -1,5 +1,4 @@
-
-  name: Build Android APK
+name: Build Android APK
   on:
     push:
       branches: [main]
@@ -19,6 +18,9 @@
           sudo apt-get update
           sudo apt-get install -y git zip unzip openjdk-17-jdk wget
           pip install buildozer cython==0.29.33
+      - name: Update buildozer.spec for NDK 25b
+        run: |
+          sed -i 's/android.ndk = 23b/android.ndk = 25b/' buildozer.spec
       - name: Build APK
         run: buildozer android debug
       - name: Upload APK
@@ -26,4 +28,3 @@
         with:
           name: gym-app-apk
           path: bin/*.apk
-
