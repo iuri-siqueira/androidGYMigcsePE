@@ -726,17 +726,20 @@ class ReportRepository:
                 return filepath
 
             else:
-                # Fallback to CSV if openpyxl not available
+                # CSV export (used when openpyxl is not available, e.g., on Android)
                 filename = f"IGCSE_GYM_Report_{timestamp}.csv"
                 filepath = os.path.join(downloads_dir, filename)
+                logger.info(f"Creating CSV report (openpyxl not available): {filepath}")
 
                 with open(filepath, 'w', newline='', encoding='utf-8') as csvfile:
                     writer = csv.writer(csvfile)
-                    writer.writerow(['IGCSE GYM - Workout Report'])
+
+                    # Header
+                    writer.writerow([AppConstants.REPORT_TITLE])
                     writer.writerow([f'Generated: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}'])
                     writer.writerow([])
 
-                    # Exercise Database Section (simplified for CSV)
+                    # Exercise Database Section
                     writer.writerow(['EXERCISE DATABASE'])
                     writer.writerow(['Exercise Name', 'Category', 'Sets', 'Reps', 'Description'])
                     for exercise in exercises:
@@ -753,6 +756,76 @@ class ReportRepository:
                             exercise['description']
                         ])
 
+                    writer.writerow([])
+
+                    # Workout Sessions Section
+                    writer.writerow(['WORKOUT SESSIONS'])
+                    writer.writerow(['Date', 'Session Type', 'Exercise', 'Weight (kg)', 'Reps Completed', 'Sets'])
+
+                    for session in sessions:
+                        session_date = session.get('date', 'Unknown')
+                        session_name = session.get('name', 'Workout')
+
+                        for exercise_log in session.get('exercises', []):
+                            exercise_info = next((ex for ex in exercises if ex['id'] == exercise_log.get('exercise_id')), {})
+                            exercise_name = exercise_log.get('name', exercise_info.get('name', 'Unknown'))
+
+                            weight = exercise_log.get('weight', 0)
+                            reps = exercise_log.get('reps', 0)
+                            sets = exercise_info.get('sets', 1)
+
+                            if 'warmup' in session_name.lower():
+                                session_type = 'Warmup'
+                                weight = 'N/A'
+                            else:
+                                session_type = 'Strength Training'
+
+                            writer.writerow([
+                                session_date,
+                                session_type,
+                                exercise_name,
+                                weight,
+                                reps,
+                                sets if session_type != 'Warmup' else 'N/A'
+                            ])
+
+                    writer.writerow([])
+
+                    # Warmup Tracking Section
+                    writer.writerow(['WARMUP COMPLETION LOG'])
+                    writer.writerow(['Date', 'Warmup Type', 'Exercises Completed', 'Total Time (estimated)'])
+
+                    warmup_sessions = [s for s in sessions if 'warmup' in s.get('name', '').lower()]
+                    for warmup in warmup_sessions:
+                        warmup_type = 'Unknown'
+                        if 'dynamic' in warmup.get('name', '').lower():
+                            warmup_type = 'Dynamic Mobility'
+                        elif 'stability' in warmup.get('name', '').lower():
+                            warmup_type = 'Stability Training'
+                        elif 'movement' in warmup.get('name', '').lower():
+                            warmup_type = 'Movement Integration'
+
+                        exercise_count = len(warmup.get('exercises', []))
+                        estimated_time = f"{exercise_count * 2} minutes"
+
+                        writer.writerow([
+                            warmup.get('date', 'Unknown'),
+                            warmup_type,
+                            exercise_count,
+                            estimated_time
+                        ])
+
+                    writer.writerow([])
+
+                    # Summary Statistics
+                    writer.writerow(['SUMMARY STATISTICS'])
+                    writer.writerow(['Metric', 'Value'])
+                    writer.writerow(['Total Workout Sessions', len([s for s in sessions if 'warmup' not in s.get('name', '').lower()])])
+                    writer.writerow(['Total Warmup Sessions', len(warmup_sessions)])
+                    writer.writerow(['Total Exercises in Database', len(exercises)])
+                    writer.writerow(['Report Date Range', f'{AppConstants.REPORT_DAYS_RANGE} days'])
+
+                logger.info(f"CSV report created successfully: {filename}")
                 return filepath
 
         except Exception as e:
@@ -1126,7 +1199,7 @@ class ReportsScreen(BoxLayout):
         """Build reports interface"""
         # Title
         title = Label(
-            text='EXCEL REPORT DOWNLOAD',
+            text='WORKOUT REPORTS',
             font_size='32sp',
             bold=True,
             color=(1, 1, 1, 1),
@@ -1135,9 +1208,14 @@ class ReportsScreen(BoxLayout):
         )
         self.add_widget(title)
 
-        # Description
+        # Description - dynamic based on availability
+        if OPENPYXL_AVAILABLE:
+            desc_text = 'Download your complete workout data as an Excel file (.xlsx)\nwith formatting and colors.'
+        else:
+            desc_text = 'Download your complete workout data as a CSV file\nthat opens in Excel, Google Sheets, or any spreadsheet app.'
+
         desc = Label(
-            text='Download your complete workout data as an Excel file\nfor analysis and record keeping.',
+            text=desc_text,
             font_size='18sp',
             color=(0.8, 0.8, 0.8, 1),
             halign='center',
@@ -1146,9 +1224,10 @@ class ReportsScreen(BoxLayout):
         )
         self.add_widget(desc)
 
-        # Download button
+        # Download button - dynamic text
+        button_text = '📥 DOWNLOAD EXCEL REPORT' if OPENPYXL_AVAILABLE else '📥 DOWNLOAD REPORT (CSV)'
         download_btn = StyledButton(
-            text='📥 DOWNLOAD EXCEL REPORT',
+            text=button_text,
             size_hint_y=None,
             height=80
         )
@@ -1168,13 +1247,14 @@ class ReportsScreen(BoxLayout):
 
         # Info section
         info_text = """
-The Excel report includes:
+The workout report includes:
 • Complete exercise database with sets/reps
 • All workout session records
 • Warmup completion tracking
 • Summary statistics
 • Date ranges and progress data
 
+""" + ("Excel format with formatting and colors." if OPENPYXL_AVAILABLE else "CSV format - opens in Excel, Google Sheets, or any spreadsheet app.") + """
 File will be saved to your Downloads folder.
         """
 
@@ -1230,11 +1310,11 @@ SESSIONS COMPLETED:
         self.report_label.text_size = (self.width - 40, None)
 
     def download_excel_report(self, instance):
-        """Download Excel report file"""
+        """Download workout report file"""
         try:
-            self.status_label.text = 'Generating Excel report...'
+            self.status_label.text = 'Generating report...'
 
-            # Generate and save the Excel file
+            # Generate and save the report file
             filepath = self.app.report_repo.export_to_excel_format()
 
             if filepath.startswith('Error:'):
@@ -1249,9 +1329,15 @@ SESSIONS COMPLETED:
                 filename = os.path.basename(filepath)
                 self.status_label.text = f'Downloaded: {filename}'
 
+                # Dynamic success message
+                if OPENPYXL_AVAILABLE:
+                    msg = f'Excel report saved as:\n{filename}\n\nFormatted .xlsx file\nCheck your Downloads folder'
+                else:
+                    msg = f'Report saved as:\n{filename}\n\nCSV format - opens in any spreadsheet app\nCheck your Downloads folder'
+
                 popup = Popup(
-                    title='Excel Report Downloaded!',
-                    content=Label(text=f'Report saved as:\n{filename}\n\nCheck your Downloads folder'),
+                    title='Report Downloaded!',
+                    content=Label(text=msg),
                     size_hint=(0.8, 0.5)
                 )
                 popup.open()
