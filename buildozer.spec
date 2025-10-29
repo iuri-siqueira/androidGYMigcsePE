@@ -7,7 +7,7 @@
   version = 1.0.0
   source.main = main_android.py
 
-  requirements = python3,kivy,openpyxl,et_xmlfile,jdcal
+  requirements = python3,kivy,libffi,cffi,pycparser,openpyxl,et-xmlfile,jdcal
 
   presplash.filename = %(source.dir)s/assets/presplash.png
   icon.filename = %(source.dir)s/assets/icon.png
