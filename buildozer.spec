@@ -7,7 +7,7 @@ source.include_exts = py,png,jpg,kv,atlas,json
 version = 1.0.0
 source.main = main_android.py
 
-requirements = python3,kivy
+requirements = python3,kivy,openpyxl,et_xmlfile,defusedxml,pillow
 
 presplash.filename = %(source.dir)s/assets/presplash.png
 icon.filename = %(source.dir)s/assets/icon.png
