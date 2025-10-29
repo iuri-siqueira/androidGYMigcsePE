@@ -22,38 +22,40 @@ from kivy.utils import platform
 # Configure logging
 def setup_logging():
     """Setup application logging with rotating file handler"""
-    from logging.handlers import RotatingFileHandler as RFH
-
-    log_dir = "gym_data"  # Will be replaced by constant after AppConstants is defined
-    if not os.path.exists(log_dir):
-        os.makedirs(log_dir)
-
-    log_file = os.path.join(log_dir, "app.log")
-
-    # Create logger
     logger = logging.getLogger("IGCSEGym")
     logger.setLevel(logging.INFO)
 
-    # Create rotating file handler with configurable sizes
-    max_bytes = 5*1024*1024  # Will use AppConstants after initialization
-    backup_count = 3
-    file_handler = RFH(log_file, maxBytes=max_bytes, backupCount=backup_count)
-    file_handler.setLevel(logging.INFO)
+    try:
+        from logging.handlers import RotatingFileHandler as RFH
 
-    # Create console handler for debugging
+        log_dir = "gym_data"
+        if not os.path.exists(log_dir):
+            os.makedirs(log_dir)
+
+        log_file = os.path.join(log_dir, "app.log")
+
+        # Create rotating file handler with configurable sizes
+        max_bytes = 5*1024*1024
+        backup_count = 3
+        file_handler = RFH(log_file, maxBytes=max_bytes, backupCount=backup_count)
+        file_handler.setLevel(logging.INFO)
+
+        # Create formatter
+        formatter = logging.Formatter(
+            '%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+            datefmt='%Y-%m-%d %H:%M:%S'
+        )
+        file_handler.setFormatter(formatter)
+        logger.addHandler(file_handler)
+    except Exception as e:
+        # If file logging fails (permissions, etc.), continue without it
+        print(f"Warning: File logging disabled: {e}")
+
+    # Always add console handler as fallback
     console_handler = logging.StreamHandler()
     console_handler.setLevel(logging.WARNING)
-
-    # Create formatter
-    formatter = logging.Formatter(
-        '%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-        datefmt='%Y-%m-%d %H:%M:%S'
-    )
-    file_handler.setFormatter(formatter)
-    console_handler.setFormatter(formatter)
-
-    # Add handlers to logger
-    logger.addHandler(file_handler)
+    console_formatter = logging.Formatter('%(levelname)s: %(message)s')
+    console_handler.setFormatter(console_formatter)
     logger.addHandler(console_handler)
 
     return logger
@@ -754,20 +756,30 @@ class ReportRepository:
                 return filepath
 
         except Exception as e:
+            logger.error(f"Excel export failed: {e}", exc_info=True)
             return f"Error: {str(e)}"
 
     def _get_downloads_directory(self) -> str:
         """Get the appropriate downloads directory based on platform"""
         if platform == 'android':
             # Android Downloads folder
-            from android.storage import primary_external_storage_path
-            return os.path.join(primary_external_storage_path(), 'Download')
+            try:
+                from android.storage import primary_external_storage_path
+                android_downloads = os.path.join(primary_external_storage_path(), 'Download')
+                logger.info(f"Using Android downloads path: {android_downloads}")
+                return android_downloads
+            except Exception as e:
+                logger.warning(f"Failed to get Android storage path: {e}, using fallback")
+                # Fallback to app's internal storage
+                return os.path.join(os.path.expanduser("~"), 'Downloads')
         else:
             # Desktop Downloads folder
             home = os.path.expanduser("~")
             downloads = os.path.join(home, 'Downloads')
             if not os.path.exists(downloads):
                 downloads = os.path.join(home, 'Desktop')  # Fallback
+            if not os.path.exists(downloads):
+                downloads = home  # Last resort fallback
             return downloads
 
 class WorkoutScreen(BoxLayout):
