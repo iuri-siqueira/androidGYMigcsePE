@@ -79,15 +79,15 @@ jobs:
             exit 1
           fi
           
-          if [ ! -f "main.py" ]; then
+          if [ ! -f "main_android.py" ]; then
             echo "valid=false" >> $GITHUB_OUTPUT
-            echo "ERROR: main.py not found"
+            echo "ERROR: main_android.py not found"
             exit 1
           fi
           
-          python3 -m py_compile main.py || {
+          python3 -m py_compile main_android.py || {
             echo "valid=false" >> $GITHUB_OUTPUT
-            echo "ERROR: Python syntax errors in main.py"
+            echo "ERROR: Python syntax errors in main_android.py"
             exit 1
           }
           
