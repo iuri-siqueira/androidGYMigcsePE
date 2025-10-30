@@ -134,7 +134,7 @@ jobs:
             build-essential ccache cmake \
             git wget curl unzip zip p7zip-full \
             python3-dev python3-pip python3-setuptools \
-            autoconf automake libtool pkg-config \
+            autoconf automake libtool libtool-bin pkg-config texinfo \
             zlib1g-dev libncurses5-dev libgdbm-dev libnss3-dev \
             libssl-dev libreadline-dev libffi-dev libsqlite3-dev \
             libbz2-dev liblzma-dev \
@@ -145,14 +145,19 @@ jobs:
             openjdk-${{ env.JAVA_VERSION }}-jdk \
             libc6-i386 lib32stdc++6 lib32gcc-s1 lib32ncurses6 lib32z1 \
             patchelf
-          
+
           sudo ln -s /usr/bin/ccache /usr/local/bin/gcc
           sudo ln -s /usr/bin/ccache /usr/local/bin/g++
           sudo ln -s /usr/bin/ccache /usr/local/bin/cc
           sudo ln -s /usr/bin/ccache /usr/local/bin/c++
-          
+
           ccache --set-config=max_size=${{ env.CCACHE_MAXSIZE }}
           ccache -z
+
+          # Verify autotools installation
+          autoconf --version
+          automake --version
+          libtoolize --version
 
       - name: Cache build dependencies
         if: github.event.inputs.clean_build != 'true'
@@ -175,15 +180,23 @@ jobs:
           python -m pip install --user \
             buildozer==${{ env.BUILDOZER_VERSION }} \
             cython==${{ env.CYTHON_VERSION }} \
-            python-for-android \
+            git+https://github.com/kivy/python-for-android.git@develop \
             kivy kivymd \
             sh colorama
-          
+
           if [ -f requirements.txt ]; then
             python -m pip install --user -r requirements.txt
           fi
-          
+
           echo "PATH=$HOME/.local/bin:$PATH" >> $GITHUB_ENV
+
+          # Verify python-for-android installation
+          p4a --version
+
+      - name: Validate build environment
+        run: |
+          chmod +x test_build_env.sh
+          ./test_build_env.sh || echo "Validation completed with warnings"
 
       - name: Configure buildozer
         run: |
@@ -203,6 +216,10 @@ jobs:
           export PATH=$HOME/.local/bin:$PATH
           export ANDROID_HOME=$HOME/.buildozer/android/platform/android-sdk
           export ANDROID_SDK_ROOT=$ANDROID_HOME
+
+          # Set environment variables to help with autotools/libffi build
+          export ACLOCAL_PATH=/usr/share/aclocal
+          export PKG_CONFIG_PATH=/usr/lib/pkgconfig:/usr/share/pkgconfig
           
           if [ "${{ github.event.inputs.clean_build }}" = "true" ]; then
             rm -rf .buildozer/android/app

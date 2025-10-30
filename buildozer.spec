@@ -24,7 +24,7 @@
   android.archs = arm64-v8a,armeabi-v7a
   android.enable_androidx = True
 
-  p4a.branch = master
+  p4a.branch = develop
   p4a.bootstrap = sdl2
 
   android.gradle_dependencies =
