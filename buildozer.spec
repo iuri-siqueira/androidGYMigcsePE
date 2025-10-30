@@ -15,17 +15,27 @@
   fullscreen = 0
 
   android.presplash_color = #0A0A1E
-  android.permissions = WRITE_EXTERNAL_STORAGE,READ_EXTERNAL_STORAGE
-  android.api = 30
+  android.permissions = WRITE_EXTERNAL_STORAGE,READ_EXTERNAL_STORAGE,INTERNET
+  android.api = 33
   android.minapi = 21
   android.ndk = 25b
-  android.archs = arm64-v8a
+  android.sdk = 33
+  android.build_tools_version = 33.0.2
+  android.archs = arm64-v8a,armeabi-v7a
+  android.enable_androidx = True
 
   p4a.branch = master
   p4a.bootstrap = sdl2
 
+  android.gradle_dependencies =
+
   android.accept_sdk_license = True
   android.skip_update = False
+  android.auto_backup = False
+  android.backup_rules =
+
+  android.release_artifact = apk
+  android.debug_artifact = apk
 
   [buildozer]
   log_level = 2
