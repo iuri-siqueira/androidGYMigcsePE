@@ -198,6 +198,11 @@ jobs:
           chmod +x test_build_env.sh
           ./test_build_env.sh || echo "Validation completed with warnings"
 
+      - name: Patch libffi recipe for Ubuntu 24.04 compatibility
+        run: |
+          chmod +x patch_libffi_recipe.sh
+          ./patch_libffi_recipe.sh
+
       - name: Configure buildozer
         run: |
           cp buildozer.spec buildozer.spec.backup
