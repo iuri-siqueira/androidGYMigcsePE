@@ -45,7 +45,7 @@ env:
   JAVA_VERSION: '17'
   BUILDOZER_VERSION: '1.5.0'
   CYTHON_VERSION: '0.29.36'
-  NDK_VERSION: '27.3.13750724'
+  NDK_VERSION: '25b'
   SDK_VERSION: '33'
   BUILD_TOOLS_VERSION: '33.0.2'
   CCACHE_DIR: /tmp/ccache
@@ -188,11 +188,11 @@ jobs:
       - name: Configure buildozer
         run: |
           cp buildozer.spec buildozer.spec.backup
-          
-          sed -i "s/^# android.sdk = .*/android.sdk = ${{ env.SDK_VERSION }}/" buildozer.spec || true
-          sed -i "s/^# android.ndk = .*/android.ndk = ${{ env.NDK_VERSION }}/" buildozer.spec || true
-          sed -i "s/^# android.build_tools_version = .*/android.build_tools_version = ${{ env.BUILD_TOOLS_VERSION }}/" buildozer.spec || true
-          sed -i "s/^# android.enable_androidx = .*/android.enable_androidx = True/" buildozer.spec || true
+
+          sed -i "s/^android.sdk = .*/android.sdk = ${{ env.SDK_VERSION }}/" buildozer.spec || true
+          sed -i "s/^android.ndk = .*/android.ndk = ${{ env.NDK_VERSION }}/" buildozer.spec || true
+          sed -i "s/^android.build_tools_version = .*/android.build_tools_version = ${{ env.BUILD_TOOLS_VERSION }}/" buildozer.spec || true
+          sed -i "s/^android.enable_androidx = .*/android.enable_androidx = True/" buildozer.spec || true
 
       - name: Build APK
         id: build
