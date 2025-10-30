@@ -33,10 +33,9 @@ android.debug_artifact = apk
 # Gradle settings
 android.gradle_dependencies =
 
-# Build settings
-p4a.branch = master
+# Build settings - use develop branch for Python 3.11 compatibility
+p4a.branch = develop
 p4a.bootstrap = sdl2
-p4a.source_dir =
 
 [buildozer]
 log_level = 2
