@@ -1,0 +1,4 @@
+# Build dependencies
+buildozer==1.5.0
+cython==0.29.36
+python-for-android
