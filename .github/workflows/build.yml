@@ -62,6 +62,8 @@ jobs:
             buildozer-${{ runner.os }}-
 
       - name: Build APK
+        env:
+          GRADLE_OPTS: "-Xmx2048m -Dorg.gradle.jvmargs='-Xmx2048m'"
         run: |
           buildozer -v android debug 2>&1 | tee build.log
 
@@ -72,8 +74,10 @@ jobs:
             ls -lh bin/*.apk
           else
             echo "✗ Build failed"
-            echo "Last 100 lines of build log:"
-            tail -100 build.log
+            echo "=== SEARCHING FOR ERRORS ==="
+            grep -i "error" build.log | tail -50 || true
+            echo "=== LAST 500 LINES ==="
+            tail -500 build.log
             exit 1
           fi
 

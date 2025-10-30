@@ -20,16 +20,23 @@ fullscreen = 0
 
 # Android settings
 android.presplash_color = #46008B
-android.permissions = WRITE_EXTERNAL_STORAGE,READ_EXTERNAL_STORAGE
-android.api = 30
+android.permissions = WRITE_EXTERNAL_STORAGE,READ_EXTERNAL_STORAGE,INTERNET
+android.api = 33
 android.minapi = 21
 android.ndk = 25b
 android.archs = arm64-v8a
 android.accept_sdk_license = True
+android.skip_update = False
+android.release_artifact = apk
+android.debug_artifact = apk
+
+# Gradle settings
+android.gradle_dependencies =
 
 # Build settings
 p4a.branch = master
 p4a.bootstrap = sdl2
+p4a.source_dir =
 
 [buildozer]
 log_level = 2
