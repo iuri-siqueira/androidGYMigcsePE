@@ -579,36 +579,43 @@ class ReportRepository:
             # Generate filename with timestamp
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
-            if OPENPYXL_AVAILABLE:
-                # Create proper Excel file
+            if XLSX_AVAILABLE:
+                # Create Excel file with xlsxwriter (pure Python, works on Android)
                 filename = f"IGCSE_GYM_Report_{timestamp}.xlsx"
                 filepath = os.path.join(downloads_dir, filename)
+                logger.info(f"Creating Excel report with xlsxwriter: {filepath}")
 
-                # Create workbook and worksheet
-                wb = Workbook()
-                ws = wb.active
-                ws.title = "IGCSE GYM Report"
+                # Create workbook
+                workbook = xlsxwriter.Workbook(filepath)
+                worksheet = workbook.add_worksheet("IGCSE GYM Report")
 
-                # Define styles
-                header_font = Font(bold=True, size=14)
-                section_font = Font(bold=True, size=12)
-                header_fill = PatternFill(start_color="46008B", end_color="46008B", fill_type="solid")
+                # Define formats
+                header_format = workbook.add_format({
+                    'bold': True,
+                    'font_size': 14,
+                    'bg_color': '#46008B',
+                    'font_color': 'white'
+                })
+                section_format = workbook.add_format({
+                    'bold': True,
+                    'font_size': 12
+                })
+                col_header_format = workbook.add_format({'bold': True})
 
-                row = 1
+                row = 0
 
                 # Main Header
-                ws.cell(row=row, column=1, value=AppConstants.REPORT_TITLE).font = header_font
-                ws.cell(row=row, column=1).fill = header_fill
+                worksheet.write(row, 0, AppConstants.REPORT_TITLE, header_format)
                 row += 1
-                ws.cell(row=row, column=1, value=f'Generated: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}')
+                worksheet.write(row, 0, f'Generated: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}')
                 row += 2
 
                 # Exercise Database Section
-                ws.cell(row=row, column=1, value="EXERCISE DATABASE").font = section_font
+                worksheet.write(row, 0, "EXERCISE DATABASE", section_format)
                 row += 1
                 headers = ['Exercise Name', 'Category', 'Sets', 'Reps', 'Description']
-                for col, header in enumerate(headers, 1):
-                    ws.cell(row=row, column=col, value=header).font = Font(bold=True)
+                for col, header in enumerate(headers):
+                    worksheet.write(row, col, header, col_header_format)
                 row += 1
 
                 for exercise in exercises:
@@ -617,21 +624,21 @@ class ReportRepository:
                     unit = exercise.get('unit', 'reps')
                     reps_display = f"{reps} {unit}" if unit != 'reps' else str(reps)
 
-                    ws.cell(row=row, column=1, value=exercise['name'])
-                    ws.cell(row=row, column=2, value=exercise['category'])
-                    ws.cell(row=row, column=3, value=sets if not exercise['category'].startswith('Warmup') else 1)
-                    ws.cell(row=row, column=4, value=reps_display)
-                    ws.cell(row=row, column=5, value=exercise['description'])
+                    worksheet.write(row, 0, exercise['name'])
+                    worksheet.write(row, 1, exercise['category'])
+                    worksheet.write(row, 2, sets if not exercise['category'].startswith('Warmup') else 1)
+                    worksheet.write(row, 3, reps_display)
+                    worksheet.write(row, 4, exercise['description'])
                     row += 1
 
                 row += 1
 
                 # Workout Sessions Section
-                ws.cell(row=row, column=1, value="WORKOUT SESSIONS").font = section_font
+                worksheet.write(row, 0, "WORKOUT SESSIONS", section_format)
                 row += 1
                 session_headers = ['Date', 'Session Type', 'Exercise', 'Weight (kg)', 'Reps Completed', 'Sets']
-                for col, header in enumerate(session_headers, 1):
-                    ws.cell(row=row, column=col, value=header).font = Font(bold=True)
+                for col, header in enumerate(session_headers):
+                    worksheet.write(row, col, header, col_header_format)
                 row += 1
 
                 for session in sessions:
@@ -648,26 +655,27 @@ class ReportRepository:
 
                         if 'warmup' in session_name.lower():
                             session_type = 'Warmup'
-                            weight = 'N/A'
+                            weight_val = 'N/A'
                         else:
                             session_type = 'Strength Training'
+                            weight_val = weight
 
-                        ws.cell(row=row, column=1, value=session_date)
-                        ws.cell(row=row, column=2, value=session_type)
-                        ws.cell(row=row, column=3, value=exercise_name)
-                        ws.cell(row=row, column=4, value=weight)
-                        ws.cell(row=row, column=5, value=reps)
-                        ws.cell(row=row, column=6, value=sets if session_type != 'Warmup' else 'N/A')
+                        worksheet.write(row, 0, session_date)
+                        worksheet.write(row, 1, session_type)
+                        worksheet.write(row, 2, exercise_name)
+                        worksheet.write(row, 3, weight_val)
+                        worksheet.write(row, 4, reps)
+                        worksheet.write(row, 5, sets if session_type != 'Warmup' else 'N/A')
                         row += 1
 
                 row += 1
 
                 # Warmup Tracking Section
-                ws.cell(row=row, column=1, value="WARMUP COMPLETION LOG").font = section_font
+                worksheet.write(row, 0, "WARMUP COMPLETION LOG", section_format)
                 row += 1
                 warmup_headers = ['Date', 'Warmup Type', 'Exercises Completed', 'Total Time (estimated)']
-                for col, header in enumerate(warmup_headers, 1):
-                    ws.cell(row=row, column=col, value=header).font = Font(bold=True)
+                for col, header in enumerate(warmup_headers):
+                    worksheet.write(row, col, header, col_header_format)
                 row += 1
 
                 warmup_sessions = [s for s in sessions if 'warmup' in s.get('name', '').lower()]
@@ -683,52 +691,46 @@ class ReportRepository:
                     exercise_count = len(warmup.get('exercises', []))
                     estimated_time = f"{exercise_count * 2} minutes"
 
-                    ws.cell(row=row, column=1, value=warmup.get('date', 'Unknown'))
-                    ws.cell(row=row, column=2, value=warmup_type)
-                    ws.cell(row=row, column=3, value=exercise_count)
-                    ws.cell(row=row, column=4, value=estimated_time)
+                    worksheet.write(row, 0, warmup.get('date', 'Unknown'))
+                    worksheet.write(row, 1, warmup_type)
+                    worksheet.write(row, 2, exercise_count)
+                    worksheet.write(row, 3, estimated_time)
                     row += 1
 
                 row += 1
 
                 # Summary Statistics
-                ws.cell(row=row, column=1, value="SUMMARY STATISTICS").font = section_font
+                worksheet.write(row, 0, "SUMMARY STATISTICS", section_format)
                 row += 1
-                ws.cell(row=row, column=1, value="Total Workout Sessions")
-                ws.cell(row=row, column=2, value=len([s for s in sessions if 'warmup' not in s.get('name', '').lower()]))
+                worksheet.write(row, 0, "Total Workout Sessions")
+                worksheet.write(row, 1, len([s for s in sessions if 'warmup' not in s.get('name', '').lower()]))
                 row += 1
-                ws.cell(row=row, column=1, value="Total Warmup Sessions")
-                ws.cell(row=row, column=2, value=len(warmup_sessions))
+                worksheet.write(row, 0, "Total Warmup Sessions")
+                worksheet.write(row, 1, len(warmup_sessions))
                 row += 1
-                ws.cell(row=row, column=1, value="Total Exercises in Database")
-                ws.cell(row=row, column=2, value=len(exercises))
+                worksheet.write(row, 0, "Total Exercises in Database")
+                worksheet.write(row, 1, len(exercises))
                 row += 1
-                ws.cell(row=row, column=1, value="Report Date Range")
-                ws.cell(row=row, column=2, value="30 days")
+                worksheet.write(row, 0, "Report Date Range")
+                worksheet.write(row, 1, f"{AppConstants.REPORT_DAYS_RANGE} days")
 
                 # Auto-adjust column widths
-                for col in ws.columns:
-                    max_length = 0
-                    column = col[0].column_letter
-                    for cell in col:
-                        try:
-                            if cell.value is not None and len(str(cell.value)) > max_length:
-                                max_length = len(str(cell.value))
-                        except (TypeError, AttributeError) as e:
-                            logger.warning(f"Error calculating column width: {e}")
-                            pass
-                    adjusted_width = min(max_length + 2, 50)
-                    ws.column_dimensions[column].width = adjusted_width
+                worksheet.set_column(0, 0, 25)  # Exercise Name / Date
+                worksheet.set_column(1, 1, 20)  # Category / Type
+                worksheet.set_column(2, 2, 12)  # Sets
+                worksheet.set_column(3, 3, 15)  # Reps / Weight
+                worksheet.set_column(4, 4, 40)  # Description
 
-                # Save workbook
-                wb.save(filepath)
+                # Close workbook
+                workbook.close()
+                logger.info(f"Excel report created successfully: {filename}")
                 return filepath
 
             else:
-                # CSV export (used when openpyxl is not available, e.g., on Android)
+                # CSV export fallback (used when xlsxwriter is not available)
                 filename = f"IGCSE_GYM_Report_{timestamp}.csv"
                 filepath = os.path.join(downloads_dir, filename)
-                logger.info(f"Creating CSV report (openpyxl not available): {filepath}")
+                logger.info(f"Creating CSV report (xlsxwriter not available): {filepath}")
 
                 with open(filepath, 'w', newline='', encoding='utf-8') as csvfile:
                     writer = csv.writer(csvfile)
@@ -1208,7 +1210,7 @@ class ReportsScreen(BoxLayout):
         self.add_widget(title)
 
         # Description - dynamic based on availability
-        if OPENPYXL_AVAILABLE:
+        if XLSX_AVAILABLE:
             desc_text = 'Download your complete workout data as an Excel file (.xlsx)\nwith formatting and colors.'
         else:
             desc_text = 'Download your complete workout data as a CSV file\nthat opens in Excel, Google Sheets, or any spreadsheet app.'
@@ -1224,7 +1226,7 @@ class ReportsScreen(BoxLayout):
         self.add_widget(desc)
 
         # Download button - dynamic text
-        button_text = '📥 DOWNLOAD EXCEL REPORT' if OPENPYXL_AVAILABLE else '📥 DOWNLOAD REPORT (CSV)'
+        button_text = '📥 DOWNLOAD EXCEL REPORT' if XLSX_AVAILABLE else '📥 DOWNLOAD REPORT (CSV)'
         download_btn = StyledButton(
             text=button_text,
             size_hint_y=None,
@@ -1253,7 +1255,7 @@ The workout report includes:
 • Summary statistics
 • Date ranges and progress data
 
-""" + ("Excel format with formatting and colors." if OPENPYXL_AVAILABLE else "CSV format - opens in Excel, Google Sheets, or any spreadsheet app.") + """
+""" + ("Excel format with formatting and colors." if XLSX_AVAILABLE else "CSV format - opens in Excel, Google Sheets, or any spreadsheet app.") + """
 File will be saved to your Downloads folder.
         """
 
@@ -1329,7 +1331,7 @@ SESSIONS COMPLETED:
                 self.status_label.text = f'Downloaded: {filename}'
 
                 # Dynamic success message
-                if OPENPYXL_AVAILABLE:
+                if XLSX_AVAILABLE:
                     msg = f'Excel report saved as:\n{filename}\n\nFormatted .xlsx file\nCheck your Downloads folder'
                 else:
                     msg = f'Report saved as:\n{filename}\n\nCSV format - opens in any spreadsheet app\nCheck your Downloads folder'
