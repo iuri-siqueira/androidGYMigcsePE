@@ -7,7 +7,7 @@
   version = 1.0.0
   source.main = main_android.py
 
-  requirements = python3,kivy
+  requirements = python3,kivy,xlsxwriter
 
   presplash.filename = %(source.dir)s/assets/presplash.png
   icon.filename = %(source.dir)s/assets/icon.png

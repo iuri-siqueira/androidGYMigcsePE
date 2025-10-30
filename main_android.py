@@ -11,11 +11,10 @@ import logging
 from logging.handlers import RotatingFileHandler
 from typing import List, Dict, Optional, Any, Tuple
 try:
-    from openpyxl import Workbook
-    from openpyxl.styles import Font, PatternFill
-    OPENPYXL_AVAILABLE = True
+    import xlsxwriter
+    XLSX_AVAILABLE = True
 except ImportError:
-    OPENPYXL_AVAILABLE = False
+    XLSX_AVAILABLE = False
 from datetime import datetime, timedelta
 from kivy.utils import platform
 
