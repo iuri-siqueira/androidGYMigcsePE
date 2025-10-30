@@ -1,17 +1,6 @@
 """
-IGCSE GYM - Enterprise-Grade Fitness Tracking Application
-========================================================
-Complete workout management with advanced features:
-- Excel/CSV report generation with formatting
-- Data backup and recovery
-- Performance monitoring and analytics
-- Crash recovery
-- Data integrity validation
-- Enterprise-level error handling
-- Audit logging
-- Advanced insights and metrics
-
-Version: 2.0.0 (Enterprise Edition)
+IGCSE GYM - Full-Featured Fitness Tracking Application
+Complete workout management with Excel report generation
 """
 
 import os
@@ -19,15 +8,8 @@ import json
 import base64
 import csv
 import logging
-import shutil
-import hashlib
-import time
-from functools import wraps
-from collections import defaultdict
 from logging.handlers import RotatingFileHandler
-from typing import List, Dict, Optional, Any, Tuple, Callable
-from dataclasses import dataclass, field, asdict
-from enum import Enum
+from typing import List, Dict, Optional, Any, Tuple
 try:
     import xlsxwriter
     XLSX_AVAILABLE = True
@@ -79,372 +61,7 @@ def setup_logging():
 
 # Initialize logger
 logger = setup_logging()
-logger.info("IGCSE GYM Application Starting - Enterprise Edition v2.0.0")
-
-# ============================================================================
-# ENTERPRISE-GRADE INFRASTRUCTURE
-# ============================================================================
-
-class OperationStatus(Enum):
-    """Status codes for operations"""
-    SUCCESS = "success"
-    FAILURE = "failure"
-    RETRY = "retry"
-    PARTIAL = "partial"
-
-@dataclass
-class PerformanceMetrics:
-    """Track performance metrics for monitoring"""
-    operation_name: str
-    start_time: float = field(default_factory=time.time)
-    end_time: float = 0.0
-    success: bool = False
-    error: Optional[str] = None
-
-    def duration_ms(self) -> float:
-        """Calculate duration in milliseconds"""
-        if self.end_time == 0:
-            return (time.time() - self.start_time) * 1000
-        return (self.end_time - self.start_time) * 1000
-
-class PerformanceMonitor:
-    """Enterprise-level performance monitoring"""
-
-    def __init__(self):
-        self.metrics: List[PerformanceMetrics] = []
-        self.operation_counts: Dict[str, int] = defaultdict(int)
-        self.error_counts: Dict[str, int] = defaultdict(int)
-
-    def record_metric(self, metric: PerformanceMetrics):
-        """Record a performance metric"""
-        self.metrics.append(metric)
-        self.operation_counts[metric.operation_name] += 1
-        if not metric.success and metric.error:
-            self.error_counts[metric.error] += 1
-
-        # Keep only last 1000 metrics to prevent memory issues
-        if len(self.metrics) > 1000:
-            self.metrics = self.metrics[-1000:]
-
-    def get_stats(self) -> Dict[str, Any]:
-        """Get performance statistics"""
-        if not self.metrics:
-            return {}
-
-        recent_metrics = self.metrics[-100:]
-        avg_duration = sum(m.duration_ms() for m in recent_metrics) / len(recent_metrics)
-        success_rate = sum(1 for m in recent_metrics if m.success) / len(recent_metrics)
-
-        return {
-            'total_operations': len(self.metrics),
-            'avg_duration_ms': round(avg_duration, 2),
-            'success_rate': round(success_rate * 100, 2),
-            'operation_counts': dict(self.operation_counts),
-            'error_counts': dict(self.error_counts)
-        }
-
-# Global performance monitor
-perf_monitor = PerformanceMonitor()
-
-def monitored_operation(operation_name: str):
-    """Decorator to monitor operation performance"""
-    def decorator(func: Callable) -> Callable:
-        @wraps(func)
-        def wrapper(*args, **kwargs):
-            metric = PerformanceMetrics(operation_name=operation_name)
-            try:
-                result = func(*args, **kwargs)
-                metric.success = True
-                return result
-            except Exception as e:
-                metric.success = False
-                metric.error = str(e)
-                logger.error(f"Operation {operation_name} failed: {e}")
-                raise
-            finally:
-                metric.end_time = time.time()
-                perf_monitor.record_metric(metric)
-        return wrapper
-    return decorator
-
-def retry_on_failure(max_retries: int = 3, delay: float = 0.5):
-    """Decorator to retry failed operations with exponential backoff"""
-    def decorator(func: Callable) -> Callable:
-        @wraps(func)
-        def wrapper(*args, **kwargs):
-            last_exception = None
-            for attempt in range(max_retries):
-                try:
-                    return func(*args, **kwargs)
-                except Exception as e:
-                    last_exception = e
-                    if attempt < max_retries - 1:
-                        wait_time = delay * (2 ** attempt)  # Exponential backoff
-                        logger.warning(f"Attempt {attempt + 1} failed for {func.__name__}, retrying in {wait_time}s: {e}")
-                        time.sleep(wait_time)
-                    else:
-                        logger.error(f"All {max_retries} attempts failed for {func.__name__}: {e}")
-            raise last_exception
-        return wrapper
-    return decorator
-
-class DataIntegrityChecker:
-    """Validate data integrity and detect corruption"""
-
-    @staticmethod
-    def validate_json_structure(data: Any, required_fields: List[str]) -> bool:
-        """Validate JSON structure"""
-        if not isinstance(data, (list, dict)):
-            return False
-
-        if isinstance(data, dict):
-            return all(field in data for field in required_fields)
-
-        return True
-
-    @staticmethod
-    def calculate_checksum(data: str) -> str:
-        """Calculate SHA-256 checksum for data"""
-        return hashlib.sha256(data.encode()).hexdigest()
-
-    @staticmethod
-    def verify_file_integrity(file_path: str, expected_checksum: Optional[str] = None) -> bool:
-        """Verify file hasn't been corrupted"""
-        try:
-            with open(file_path, 'r') as f:
-                content = f.read()
-
-            if expected_checksum:
-                current_checksum = DataIntegrityChecker.calculate_checksum(content)
-                return current_checksum == expected_checksum
-
-            # Try to parse as JSON to verify it's valid
-            json.loads(content)
-            return True
-        except Exception as e:
-            logger.error(f"File integrity check failed for {file_path}: {e}")
-            return False
-
-class BackupManager:
-    """Enterprise-level backup and recovery system"""
-
-    def __init__(self, data_dir: str):
-        self.data_dir = data_dir
-        self.backup_dir = os.path.join(data_dir, "backups")
-        self.max_backups = 10  # Keep last 10 backups
-
-        if not os.path.exists(self.backup_dir):
-            os.makedirs(self.backup_dir)
-
-    @monitored_operation("backup_create")
-    @retry_on_failure(max_retries=3)
-    def create_backup(self, file_path: str) -> Optional[str]:
-        """Create backup of a file"""
-        try:
-            if not os.path.exists(file_path):
-                return None
-
-            filename = os.path.basename(file_path)
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            backup_name = f"{filename}.{timestamp}.backup"
-            backup_path = os.path.join(self.backup_dir, backup_name)
-
-            shutil.copy2(file_path, backup_path)
-            logger.info(f"Backup created: {backup_name}")
-
-            # Cleanup old backups
-            self._cleanup_old_backups(filename)
-
-            return backup_path
-        except Exception as e:
-            logger.error(f"Backup creation failed for {file_path}: {e}")
-            return None
-
-    def _cleanup_old_backups(self, base_filename: str):
-        """Remove old backups keeping only the most recent ones"""
-        try:
-            backups = [f for f in os.listdir(self.backup_dir)
-                      if f.startswith(base_filename) and f.endswith('.backup')]
-
-            backups.sort(reverse=True)  # Most recent first
-
-            # Remove old backups
-            for old_backup in backups[self.max_backups:]:
-                backup_path = os.path.join(self.backup_dir, old_backup)
-                os.remove(backup_path)
-                logger.info(f"Removed old backup: {old_backup}")
-        except Exception as e:
-            logger.warning(f"Failed to cleanup old backups: {e}")
-
-    @monitored_operation("backup_restore")
-    def restore_from_backup(self, file_path: str) -> bool:
-        """Restore file from most recent backup"""
-        try:
-            filename = os.path.basename(file_path)
-            backups = [f for f in os.listdir(self.backup_dir)
-                      if f.startswith(filename) and f.endswith('.backup')]
-
-            if not backups:
-                logger.warning(f"No backups found for {filename}")
-                return False
-
-            # Get most recent backup
-            backups.sort(reverse=True)
-            latest_backup = backups[0]
-            backup_path = os.path.join(self.backup_dir, latest_backup)
-
-            shutil.copy2(backup_path, file_path)
-            logger.info(f"Restored from backup: {latest_backup}")
-            return True
-        except Exception as e:
-            logger.error(f"Restore from backup failed for {file_path}: {e}")
-            return False
-
-    def list_backups(self) -> List[str]:
-        """List all available backups"""
-        try:
-            return [f for f in os.listdir(self.backup_dir) if f.endswith('.backup')]
-        except Exception as e:
-            logger.error(f"Failed to list backups: {e}")
-            return []
-
-class AnalyticsEngine:
-    """Advanced analytics and insights"""
-
-    @staticmethod
-    def calculate_workout_streaks(sessions: List[Dict[str, Any]]) -> Dict[str, Any]:
-        """Calculate workout streaks and consistency"""
-        if not sessions:
-            return {'current_streak': 0, 'longest_streak': 0, 'total_days': 0}
-
-        # Sort sessions by date
-        sorted_sessions = sorted(sessions, key=lambda x: x.get('date', ''))
-
-        dates = set()
-        for session in sorted_sessions:
-            try:
-                date_str = session.get('date', '')[:10]  # Get just the date part
-                dates.add(date_str)
-            except Exception:
-                continue
-
-        if not dates:
-            return {'current_streak': 0, 'longest_streak': 0, 'total_days': 0}
-
-        sorted_dates = sorted(dates)
-
-        # Calculate streaks
-        current_streak = 1
-        longest_streak = 1
-        temp_streak = 1
-
-        for i in range(1, len(sorted_dates)):
-            try:
-                prev_date = datetime.fromisoformat(sorted_dates[i-1])
-                curr_date = datetime.fromisoformat(sorted_dates[i])
-                diff = (curr_date - prev_date).days
-
-                if diff == 1:
-                    temp_streak += 1
-                    longest_streak = max(longest_streak, temp_streak)
-                else:
-                    temp_streak = 1
-            except Exception:
-                continue
-
-        # Check if current streak is active
-        try:
-            last_date = datetime.fromisoformat(sorted_dates[-1])
-            days_since = (datetime.now() - last_date).days
-            current_streak = temp_streak if days_since <= 1 else 0
-        except Exception:
-            current_streak = 0
-
-        return {
-            'current_streak': current_streak,
-            'longest_streak': longest_streak,
-            'total_workout_days': len(dates)
-        }
-
-    @staticmethod
-    def calculate_progress_trends(weights: List[Dict[str, Any]]) -> Dict[int, Dict[str, Any]]:
-        """Calculate progression trends for exercises"""
-        trends = {}
-
-        # Group by exercise
-        by_exercise = defaultdict(list)
-        for weight_log in weights:
-            ex_id = weight_log.get('exercise_id')
-            if ex_id:
-                by_exercise[ex_id].append(weight_log)
-
-        # Calculate trends
-        for ex_id, logs in by_exercise.items():
-            sorted_logs = sorted(logs, key=lambda x: x.get('date', ''))
-
-            if len(sorted_logs) < 2:
-                trends[ex_id] = {'trend': 'insufficient_data', 'change': 0}
-                continue
-
-            weights_list = [log.get('weight', 0) for log in sorted_logs]
-
-            # Calculate percentage change
-            first_weight = weights_list[0]
-            last_weight = weights_list[-1]
-
-            if first_weight > 0:
-                change_pct = ((last_weight - first_weight) / first_weight) * 100
-            else:
-                change_pct = 0
-
-            # Determine trend
-            if change_pct > 10:
-                trend = 'improving'
-            elif change_pct < -10:
-                trend = 'declining'
-            else:
-                trend = 'stable'
-
-            trends[ex_id] = {
-                'trend': trend,
-                'change_percent': round(change_pct, 2),
-                'first_weight': first_weight,
-                'latest_weight': last_weight,
-                'total_sessions': len(sorted_logs)
-            }
-
-        return trends
-
-    @staticmethod
-    def get_insights(sessions: List[Dict[str, Any]], weights: List[Dict[str, Any]]) -> List[str]:
-        """Generate actionable insights from workout data"""
-        insights = []
-
-        # Workout frequency
-        if sessions:
-            days = len(set(s.get('date', '')[:10] for s in sessions if s.get('date')))
-            if days >= 5:
-                insights.append("🔥 Excellent consistency! You're working out 5+ days.")
-            elif days >= 3:
-                insights.append("💪 Good progress! Aim for 5+ workout days for optimal results.")
-            else:
-                insights.append("📈 Try to increase workout frequency to 3-5 days per week.")
-
-        # Progress trends
-        trends = AnalyticsEngine.calculate_progress_trends(weights)
-        improving = sum(1 for t in trends.values() if t.get('trend') == 'improving')
-
-        if improving > 0:
-            insights.append(f"⬆️ You're making progress in {improving} exercises!")
-
-        # Workout streaks
-        streaks = AnalyticsEngine.calculate_workout_streaks(sessions)
-        if streaks['current_streak'] >= 7:
-            insights.append(f"🏆 Amazing! {streaks['current_streak']}-day workout streak!")
-        elif streaks['longest_streak'] >= 7:
-            insights.append(f"🎯 Your best streak was {streaks['longest_streak']} days. You can do it again!")
-
-        return insights if insights else ["Start tracking your workouts to get personalized insights!"]
+logger.info("IGCSE GYM Application Starting")
 
 # Application Constants
 class AppConstants:
@@ -511,14 +128,7 @@ from kivy.clock import Clock
 from kivy.animation import Animation
 
 class DataStorage:
-    """
-    Enterprise-Grade Data Storage with:
-    - Automatic backups
-    - Data integrity validation
-    - Crash recovery
-    - Performance monitoring
-    - Retry mechanisms
-    """
+    """Lightweight data storage using JSON files - preserves ALL functionality"""
 
     def __init__(self, data_dir: Optional[str] = None) -> None:
         self.data_dir: str = data_dir if data_dir else AppConstants.DATA_DIR
@@ -530,15 +140,9 @@ class DataStorage:
         self.sessions_file = os.path.join(self.data_dir, "sessions.json")
         self.weights_file = os.path.join(self.data_dir, "weights.json")
         self.reports_file = os.path.join(self.data_dir, "reports.json")
-        self.metadata_file = os.path.join(self.data_dir, "metadata.json")
-
-        # Enterprise features
-        self.backup_manager = BackupManager(self.data_dir)
-        self.integrity_checker = DataIntegrityChecker()
 
         # Initialize data
         self._init_data()
-        self._verify_data_integrity()
 
     def _init_data(self):
         """Initialize data files with default exercise database"""
@@ -587,95 +191,23 @@ class DataStorage:
             if not os.path.exists(file_path):
                 self._save_json(file_path, [])
 
-    def _verify_data_integrity(self):
-        """Verify integrity of all data files on startup"""
-        files_to_check = [
-            self.exercises_file,
-            self.sessions_file,
-            self.weights_file,
-            self.reports_file
-        ]
-
-        for file_path in files_to_check:
-            if os.path.exists(file_path):
-                if not self.integrity_checker.verify_file_integrity(file_path):
-                    logger.warning(f"Integrity check failed for {file_path}, attempting restore")
-                    # Try to restore from backup
-                    if self.backup_manager.restore_from_backup(file_path):
-                        logger.info(f"Successfully restored {file_path} from backup")
-                    else:
-                        logger.error(f"Failed to restore {file_path}, data may be corrupted")
-
-    @monitored_operation("load_json")
-    @retry_on_failure(max_retries=3)
     def _load_json(self, file_path: str) -> List[Dict[str, Any]]:
-        """Load data from JSON file with retry and monitoring"""
+        """Load data from JSON file"""
         try:
             with open(file_path, 'r') as f:
-                data = json.load(f)
-
-            # Validate structure
-            if not isinstance(data, list):
-                logger.warning(f"Invalid JSON structure in {file_path}, expected list")
-                # Try to recover from backup
-                if self.backup_manager.restore_from_backup(file_path):
-                    with open(file_path, 'r') as f:
-                        data = json.load(f)
-                else:
-                    return []
-
-            return data
+                return json.load(f)
         except (FileNotFoundError, json.JSONDecodeError, IOError, PermissionError) as e:
             logger.error(f"Error loading JSON from {file_path}: {e}")
-            # Try to recover from backup
-            if self.backup_manager.restore_from_backup(file_path):
-                logger.info(f"Recovered {file_path} from backup after load failure")
-                try:
-                    with open(file_path, 'r') as f:
-                        return json.load(f)
-                except Exception:
-                    pass
             return []
 
-    @monitored_operation("save_json")
-    @retry_on_failure(max_retries=3)
     def _save_json(self, file_path: str, data: List[Dict[str, Any]]) -> bool:
-        """Save data to JSON file with backup and validation"""
+        """Save data to JSON file"""
         try:
-            # Create backup before saving
-            if os.path.exists(file_path):
-                self.backup_manager.create_backup(file_path)
-
-            # Validate data structure
-            if not isinstance(data, list):
-                logger.error(f"Invalid data structure for {file_path}, expected list")
-                return False
-
-            # Write to temporary file first (atomic write pattern)
-            temp_file = f"{file_path}.tmp"
-            with open(temp_file, 'w') as f:
+            with open(file_path, 'w') as f:
                 json.dump(data, f, indent=2, default=str)
-
-            # Verify temp file integrity
-            if not self.integrity_checker.verify_file_integrity(temp_file):
-                logger.error(f"Integrity check failed for temporary file")
-                os.remove(temp_file)
-                return False
-
-            # Move temp file to actual file (atomic operation)
-            shutil.move(temp_file, file_path)
-
-            logger.debug(f"Successfully saved {file_path}")
             return True
         except (IOError, PermissionError, OSError) as e:
             logger.error(f"Error saving JSON to {file_path}: {e}")
-            # Clean up temp file if it exists
-            temp_file = f"{file_path}.tmp"
-            if os.path.exists(temp_file):
-                try:
-                    os.remove(temp_file)
-                except Exception:
-                    pass
             return False
 
     def get_exercises(self) -> List[Dict[str, Any]]:
@@ -770,89 +302,6 @@ class DataStorage:
                 'date': weight_log.get('date')
             })
         return progress
-
-    @monitored_operation("export_all_data")
-    def export_all_data(self) -> Dict[str, Any]:
-        """Export all data for backup/transfer (Enterprise feature)"""
-        try:
-            return {
-                'version': '2.0.0',
-                'export_date': datetime.now().isoformat(),
-                'exercises': self.get_exercises(),
-                'sessions': self._load_json(self.sessions_file),
-                'weights': self._load_json(self.weights_file),
-                'reports': self._load_json(self.reports_file),
-                'checksum': self.integrity_checker.calculate_checksum(
-                    json.dumps({
-                        'exercises': self.get_exercises(),
-                        'sessions': self._load_json(self.sessions_file),
-                        'weights': self._load_json(self.weights_file)
-                    }, default=str)
-                )
-            }
-        except Exception as e:
-            logger.error(f"Failed to export data: {e}")
-            return {}
-
-    @monitored_operation("import_data")
-    def import_data(self, data: Dict[str, Any]) -> bool:
-        """Import data from backup/transfer (Enterprise feature)"""
-        try:
-            # Validate import data
-            required_keys = ['exercises', 'sessions', 'weights']
-            if not all(key in data for key in required_keys):
-                logger.error("Invalid import data structure")
-                return False
-
-            # Create backups before importing
-            for file_path in [self.exercises_file, self.sessions_file, self.weights_file]:
-                if os.path.exists(file_path):
-                    self.backup_manager.create_backup(file_path)
-
-            # Import data
-            success = True
-            success &= self._save_json(self.exercises_file, data['exercises'])
-            success &= self._save_json(self.sessions_file, data['sessions'])
-            success &= self._save_json(self.weights_file, data['weights'])
-
-            if 'reports' in data:
-                success &= self._save_json(self.reports_file, data['reports'])
-
-            if success:
-                logger.info("Data import successful")
-            else:
-                logger.error("Data import completed with errors")
-
-            return success
-        except Exception as e:
-            logger.error(f"Failed to import data: {e}")
-            return False
-
-    def get_insights(self) -> List[str]:
-        """Get AI-powered insights about workout progress (Enterprise feature)"""
-        sessions = self.get_workout_history(30)
-        weights = self._load_json(self.weights_file)
-        return AnalyticsEngine.get_insights(sessions, weights)
-
-    def get_performance_stats(self) -> Dict[str, Any]:
-        """Get system performance statistics (Enterprise feature)"""
-        return perf_monitor.get_stats()
-
-    def get_health_status(self) -> Dict[str, Any]:
-        """Get system health status (Enterprise feature)"""
-        return {
-            'data_files_ok': all(
-                self.integrity_checker.verify_file_integrity(f)
-                for f in [self.exercises_file, self.sessions_file, self.weights_file]
-                if os.path.exists(f)
-            ),
-            'backups_available': len(self.backup_manager.list_backups()),
-            'total_exercises': len(self.get_exercises()),
-            'total_sessions': len(self._load_json(self.sessions_file)),
-            'total_weight_logs': len(self._load_json(self.weights_file)),
-            'storage_path': self.data_dir,
-            'performance': perf_monitor.get_stats()
-        }
 
 def simple_encode(text: str) -> str:
     """
@@ -2066,36 +1515,24 @@ class IGCSEGymApp(App):
         reports_btn.bind(on_press=lambda x: self.show_reports_screen())
         main_screen.add_widget(reports_btn)
 
-        # Status area with enterprise insights
-        workouts_this_week = len(self.storage.get_workout_history(7))
-        total_exercises = len(self.storage.get_exercises())
-        insights = self.storage.get_insights()
-        health = self.storage.get_health_status()
-
-        # Create insights text
-        insights_text = "\n".join(f"• {insight}" for insight in insights[:3])
-
+        # Status area
         status_text = f"""
-IGCSE IURI GYM - ENTERPRISE EDITION v2.0.0
+IGCSE IURI GYM FILES
 
 📊 Recent Activity:
-• {workouts_this_week} workouts this week
-• {total_exercises} exercises in database
-• {health['total_weight_logs']} total exercise logs
-• {health['backups_available']} backups available
-
-💡 Insights:
-{insights_text}
+• {len(self.storage.get_workout_history(7))} workouts this week
+• {len(self.storage.get_exercises())} exercises in database
+• All data stored locally in JSON format
 
 Select a workout type above to begin!
         """
 
         status_label = Label(
             text=status_text,
-            font_size='15sp',
+            font_size='16sp',
             color=(0.8, 0.8, 0.8, 1),
             halign='center',
-            valign='top'
+            valign='center'
         )
         status_label.bind(size=status_label.setter('text_size'))
         main_screen.add_widget(status_label)
