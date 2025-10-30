@@ -5,17 +5,116 @@ Complete workout management with Excel report generation
 
 import os
 import json
-import hashlib
 import base64
 import csv
+import logging
+from logging.handlers import RotatingFileHandler
+from typing import List, Dict, Optional, Any, Tuple
 try:
-    from openpyxl import Workbook
-    from openpyxl.styles import Font, PatternFill, Alignment
-    OPENPYXL_AVAILABLE = True
+    import xlsxwriter
+    XLSX_AVAILABLE = True
 except ImportError:
-    OPENPYXL_AVAILABLE = False
+    XLSX_AVAILABLE = False
 from datetime import datetime, timedelta
 from kivy.utils import platform
+
+# Configure logging
+def setup_logging():
+    """Setup application logging with rotating file handler"""
+    logger = logging.getLogger("IGCSEGym")
+    logger.setLevel(logging.INFO)
+
+    try:
+        from logging.handlers import RotatingFileHandler as RFH
+
+        log_dir = "gym_data"
+        if not os.path.exists(log_dir):
+            os.makedirs(log_dir)
+
+        log_file = os.path.join(log_dir, "app.log")
+
+        # Create rotating file handler with configurable sizes
+        max_bytes = 5*1024*1024
+        backup_count = 3
+        file_handler = RFH(log_file, maxBytes=max_bytes, backupCount=backup_count)
+        file_handler.setLevel(logging.INFO)
+
+        # Create formatter
+        formatter = logging.Formatter(
+            '%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+            datefmt='%Y-%m-%d %H:%M:%S'
+        )
+        file_handler.setFormatter(formatter)
+        logger.addHandler(file_handler)
+    except Exception as e:
+        # If file logging fails (permissions, etc.), continue without it
+        print(f"Warning: File logging disabled: {e}")
+
+    # Always add console handler as fallback
+    console_handler = logging.StreamHandler()
+    console_handler.setLevel(logging.WARNING)
+    console_formatter = logging.Formatter('%(levelname)s: %(message)s')
+    console_handler.setFormatter(console_formatter)
+    logger.addHandler(console_handler)
+
+    return logger
+
+# Initialize logger
+logger = setup_logging()
+logger.info("IGCSE GYM Application Starting")
+
+# Application Constants
+class AppConstants:
+    """Central configuration and constants for the application"""
+
+    # Directory and file paths
+    DATA_DIR = "gym_data"
+    ASSETS_DIR = "assets"
+
+    # Validation limits
+    MAX_WEIGHT_KG = 1000
+    MAX_REPS = 1000
+    MIN_WEIGHT_KG = 0
+    MIN_REPS = 0
+
+    # Rest timer settings
+    DEFAULT_REST_TIME_SECONDS = 75  # As specified in Excel sheet
+    REST_TIMER_OPTIONS = [30, 60, 75, 90, 120]  # Quick select options
+
+    # Session type identifiers
+    SESSION_TYPE_1 = "session1"
+    SESSION_TYPE_2 = "session2"
+    WARMUP_DYNAMIC = "warmup-dynamic"
+    WARMUP_STABILITY = "warmup-stability"
+    WARMUP_MOVEMENT = "warmup-movement"
+
+    # Exercise categories
+    CATEGORY_WARMUP_DYNAMIC = "Warmup-Dynamic"
+    CATEGORY_WARMUP_STABILITY = "Warmup-Stability"
+    CATEGORY_WARMUP_MOVEMENT = "Warmup-Movement"
+
+    # UI Colors (RGBA)
+    COLOR_PRIMARY = (0.275, 0.0, 0.545, 1)  # Dark purple #46008b
+    COLOR_PRIMARY_LIGHT = (0.4, 0.1, 0.7, 0.8)  # Lighter purple
+    COLOR_PRIMARY_DARK = (0.2, 0.0, 0.4, 0.3)  # Darker purple
+    COLOR_BACKGROUND = (0.2, 0.2, 0.2, 1)  # Dark gray
+    COLOR_SUCCESS = (0.2, 0.7, 0.2, 1)  # Green
+    COLOR_TEXT_PRIMARY = (1, 1, 1, 1)  # White
+    COLOR_TEXT_SECONDARY = (0.8, 0.8, 0.8, 1)  # Light gray
+
+    # Report settings
+    REPORT_DAYS_RANGE = 30
+    REPORT_TITLE = "IGCSE GYM - Workout Report"
+
+    # Popup sizes
+    POPUP_SMALL = (0.6, 0.4)
+    POPUP_MEDIUM = (0.7, 0.4)
+    POPUP_LARGE = (0.8, 0.5)
+
+    # Logging
+    LOG_FILE_MAX_BYTES = 5 * 1024 * 1024  # 5MB
+    LOG_FILE_BACKUP_COUNT = 3
+
 from kivy.app import App
 from kivy.uix.boxlayout import BoxLayout
 from kivy.uix.button import Button
@@ -31,16 +130,16 @@ from kivy.animation import Animation
 class DataStorage:
     """Lightweight data storage using JSON files - preserves ALL functionality"""
 
-    def __init__(self, data_dir="gym_data"):
-        self.data_dir = data_dir
-        if not os.path.exists(data_dir):
-            os.makedirs(data_dir)
+    def __init__(self, data_dir: Optional[str] = None) -> None:
+        self.data_dir: str = data_dir if data_dir else AppConstants.DATA_DIR
+        if not os.path.exists(self.data_dir):
+            os.makedirs(self.data_dir)
 
         # Data files
-        self.exercises_file = os.path.join(data_dir, "exercises.json")
-        self.sessions_file = os.path.join(data_dir, "sessions.json")
-        self.weights_file = os.path.join(data_dir, "weights.json")
-        self.reports_file = os.path.join(data_dir, "reports.json")
+        self.exercises_file = os.path.join(self.data_dir, "exercises.json")
+        self.sessions_file = os.path.join(self.data_dir, "sessions.json")
+        self.weights_file = os.path.join(self.data_dir, "weights.json")
+        self.reports_file = os.path.join(self.data_dir, "reports.json")
 
         # Initialize data
         self._init_data()
@@ -92,28 +191,30 @@ class DataStorage:
             if not os.path.exists(file_path):
                 self._save_json(file_path, [])
 
-    def _load_json(self, file_path):
+    def _load_json(self, file_path: str) -> List[Dict[str, Any]]:
         """Load data from JSON file"""
         try:
             with open(file_path, 'r') as f:
                 return json.load(f)
-        except:
+        except (FileNotFoundError, json.JSONDecodeError, IOError, PermissionError) as e:
+            logger.error(f"Error loading JSON from {file_path}: {e}")
             return []
 
-    def _save_json(self, file_path, data):
+    def _save_json(self, file_path: str, data: List[Dict[str, Any]]) -> bool:
         """Save data to JSON file"""
         try:
             with open(file_path, 'w') as f:
                 json.dump(data, f, indent=2, default=str)
             return True
-        except:
+        except (IOError, PermissionError, OSError) as e:
+            logger.error(f"Error saving JSON to {file_path}: {e}")
             return False
 
-    def get_exercises(self):
+    def get_exercises(self) -> List[Dict[str, Any]]:
         """Get all exercises"""
         return self._load_json(self.exercises_file)
 
-    def add_exercise(self, name, category, description=""):
+    def add_exercise(self, name: str, category: str, description: str = "") -> bool:
         """Add new exercise"""
         exercises = self.get_exercises()
         new_id = max([ex.get('id', 0) for ex in exercises]) + 1 if exercises else 1
@@ -126,7 +227,7 @@ class DataStorage:
         exercises.append(exercise)
         return self._save_json(self.exercises_file, exercises)
 
-    def save_workout_session(self, session_name, exercises_completed):
+    def save_workout_session(self, session_name: str, exercises_completed: List[Dict[str, Any]]) -> bool:
         """Save workout session"""
         sessions = self._load_json(self.sessions_file)
         session = {
@@ -138,7 +239,7 @@ class DataStorage:
         sessions.append(session)
         return self._save_json(self.sessions_file, sessions)
 
-    def save_weight_log(self, exercise_id, weight, reps, notes=""):
+    def save_weight_log(self, exercise_id: int, weight: float, reps: int, notes: str = "") -> bool:
         """Save weight log entry"""
         weights = self._load_json(self.weights_file)
         weight_log = {
@@ -152,7 +253,7 @@ class DataStorage:
         weights.append(weight_log)
         return self._save_json(self.weights_file, weights)
 
-    def get_workout_history(self, days=30):
+    def get_workout_history(self, days: int = 30) -> List[Dict[str, Any]]:
         """Get workout history"""
         sessions = self._load_json(self.sessions_file)
         cutoff_date = datetime.now() - timedelta(days=days)
@@ -163,12 +264,13 @@ class DataStorage:
                 session_date = datetime.fromisoformat(session['date'])
                 if session_date >= cutoff_date:
                     recent_sessions.append(session)
-            except:
+            except (ValueError, KeyError, TypeError) as e:
+                logger.warning(f"Error parsing session date: {e}")
                 continue
 
         return sorted(recent_sessions, key=lambda x: x['date'], reverse=True)
 
-    def generate_weekly_report(self):
+    def generate_weekly_report(self) -> Dict[str, Any]:
         """Generate weekly workout report"""
         sessions = self.get_workout_history(7)
         weights = self._load_json(self.weights_file)
@@ -188,7 +290,7 @@ class DataStorage:
 
         return report
 
-    def _calculate_progress(self, weights):
+    def _calculate_progress(self, weights: List[Dict[str, Any]]) -> Dict[int, List[Dict[str, Any]]]:
         """Calculate weight progression"""
         progress = {}
         for weight_log in weights[-50:]:  # Last 50 entries
@@ -201,21 +303,32 @@ class DataStorage:
             })
         return progress
 
-def simple_encrypt(text):
-    """Simple encryption for sensitive data"""
+def simple_encode(text: str) -> str:
+    """
+    Simple base64 encoding for data obfuscation.
+    WARNING: This is NOT encryption and does NOT provide security.
+    Use only for basic data encoding, not for sensitive information.
+    """
     if not text:
         return ""
-    encoded = base64.b64encode(text.encode()).decode()
-    return hashlib.sha256(encoded.encode()).hexdigest()[:16] + encoded
+    try:
+        encoded = base64.b64encode(text.encode()).decode()
+        return encoded
+    except (ValueError, TypeError, UnicodeEncodeError) as e:
+        logger.error(f"Error encoding data: {e}")
+        return ""
 
-def simple_decrypt(encrypted_text):
-    """Simple decryption for sensitive data"""
-    if not encrypted_text or len(encrypted_text) < 16:
+def simple_decode(encoded_text: str) -> str:
+    """
+    Simple base64 decoding for data obfuscation.
+    WARNING: This is NOT decryption and does NOT provide security.
+    """
+    if not encoded_text:
         return ""
     try:
-        encoded = encrypted_text[16:]
-        return base64.b64decode(encoded.encode()).decode()
-    except:
+        return base64.b64decode(encoded_text.encode()).decode()
+    except (ValueError, TypeError, UnicodeDecodeError) as e:
+        logger.error(f"Error decoding data: {e}")
         return ""
 
 class StyledButton(Button):
@@ -233,16 +346,16 @@ class StyledButton(Button):
     def update_graphics(self, *args):
         self.canvas.before.clear()
         with self.canvas.before:
-            # Main gradient background with rounded corners - Dark Purple theme (#46008b)
-            Color(0.275, 0.0, 0.545, 1)  # Dark purple #46008b
+            # Main gradient background with rounded corners - Dark Purple theme
+            Color(*AppConstants.COLOR_PRIMARY)
             RoundedRectangle(pos=self.pos, size=self.size, radius=[15])
 
             # Highlight border with rounded corners
-            Color(0.4, 0.1, 0.7, 0.8)  # Lighter purple border
+            Color(*AppConstants.COLOR_PRIMARY_LIGHT)
             Line(rounded_rectangle=(self.x, self.y, self.width, self.height, 15), width=2)
 
             # Inner shadow effect
-            Color(0.2, 0.0, 0.4, 0.3)  # Darker purple for depth
+            Color(*AppConstants.COLOR_PRIMARY_DARK)
             RoundedRectangle(pos=(self.x + 2, self.y + 2), size=(self.width - 4, self.height - 4), radius=[13])
 
 class RestTimerWidget(Popup):
@@ -304,11 +417,11 @@ class RestTimerWidget(Popup):
 
         # Quick time buttons - including Excel-specified 75s
         quick_layout = BoxLayout(size_hint_y=None, height=50, spacing=5)
-        for time_val in [30, 60, 75, 90, 120]:
+        for time_val in AppConstants.REST_TIMER_OPTIONS:
             time_btn = Button(
                 text=f'{time_val}s',
                 size_hint_x=0.2,
-                background_color=(0.3, 0.3, 0.3, 1) if time_val != 75 else (0.5, 0.3, 0.8, 1)  # Highlight 75s
+                background_color=(0.3, 0.3, 0.3, 1) if time_val != AppConstants.DEFAULT_REST_TIME_SECONDS else (0.5, 0.3, 0.8, 1)  # Highlight default
             )
             time_btn.bind(on_press=lambda x, t=time_val: self.set_time(t))
             quick_layout.add_widget(time_btn)
@@ -406,36 +519,37 @@ class RestTimerWidget(Popup):
 class WorkoutRepository:
     """Repository pattern for workout data management"""
 
-    def __init__(self, storage):
+    def __init__(self, storage: DataStorage) -> None:
         self.storage = storage
 
-    def get_session_exercises(self, session_type):
+    def get_session_exercises(self, session_type: str) -> List[Dict[str, Any]]:
         """Get exercises for specific session type"""
         all_exercises = self.storage.get_exercises()
 
-        if session_type == "warmup-dynamic":
-            return [ex for ex in all_exercises if ex['category'] == 'Warmup-Dynamic']
-        elif session_type == "warmup-stability":
-            return [ex for ex in all_exercises if ex['category'] == 'Warmup-Stability']
-        elif session_type == "warmup-movement":
-            return [ex for ex in all_exercises if ex['category'] == 'Warmup-Movement']
-        elif session_type == "session1":
+        if session_type == AppConstants.WARMUP_DYNAMIC:
+            return [ex for ex in all_exercises if ex['category'] == AppConstants.CATEGORY_WARMUP_DYNAMIC]
+        elif session_type == AppConstants.WARMUP_STABILITY:
+            return [ex for ex in all_exercises if ex['category'] == AppConstants.CATEGORY_WARMUP_STABILITY]
+        elif session_type == AppConstants.WARMUP_MOVEMENT:
+            return [ex for ex in all_exercises if ex['category'] == AppConstants.CATEGORY_WARMUP_MOVEMENT]
+        elif session_type == AppConstants.SESSION_TYPE_1:
             session1_names = ["Back squat", "Bridge", "Bench press", "Bench superman",
                             "Bentover Row", "Pallof Twist", "Shoulder press", "Knee Tucks"]
             return [ex for ex in all_exercises if ex['name'] in session1_names]
-        elif session_type == "session2":
+        elif session_type == AppConstants.SESSION_TYPE_2:
+            # Removed "Knee Tucks" to avoid duplication with Session 1
             session2_names = ["Plank", "Incline Bench Press", "Pallof Press", "Lat Pull Downs",
-                            "Landmines", "Upright row", "Knee Tucks"]
+                            "Landmines", "Upright row"]
             return [ex for ex in all_exercises if ex['name'] in session2_names]
 
         return all_exercises
 
-    def log_workout(self, session_type, completed_exercises):
+    def log_workout(self, session_type: str, completed_exercises: List[Dict[str, Any]]) -> bool:
         """Log completed workout"""
         session_name = f"{session_type.title()} - {datetime.now().strftime('%Y-%m-%d')}"
         return self.storage.save_workout_session(session_name, completed_exercises)
 
-    def get_exercise_history(self, exercise_id):
+    def get_exercise_history(self, exercise_id: int) -> List[Dict[str, Any]]:
         """Get history for specific exercise"""
         weights = self.storage._load_json(self.storage.weights_file)
         return [w for w in weights if w.get('exercise_id') == exercise_id]
@@ -443,18 +557,18 @@ class WorkoutRepository:
 class ReportRepository:
     """Repository for report generation and management"""
 
-    def __init__(self, storage):
+    def __init__(self, storage: DataStorage) -> None:
         self.storage = storage
 
-    def generate_progress_report(self):
+    def generate_progress_report(self) -> Dict[str, Any]:
         """Generate comprehensive progress report"""
         return self.storage.generate_weekly_report()
 
-    def export_to_excel_format(self):
+    def export_to_excel_format(self) -> str:
         """Export data as downloadable Excel .xlsx file"""
         try:
             # Get data
-            sessions = self.storage.get_workout_history(30)
+            sessions = self.storage.get_workout_history(AppConstants.REPORT_DAYS_RANGE)
             weights = self.storage._load_json(self.storage.weights_file)
             exercises = self.storage.get_exercises()
 
@@ -465,36 +579,43 @@ class ReportRepository:
             # Generate filename with timestamp
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
-            if OPENPYXL_AVAILABLE:
-                # Create proper Excel file
+            if XLSX_AVAILABLE:
+                # Create Excel file with xlsxwriter (pure Python, works on Android)
                 filename = f"IGCSE_GYM_Report_{timestamp}.xlsx"
                 filepath = os.path.join(downloads_dir, filename)
+                logger.info(f"Creating Excel report with xlsxwriter: {filepath}")
 
-                # Create workbook and worksheet
-                wb = Workbook()
-                ws = wb.active
-                ws.title = "IGCSE GYM Report"
+                # Create workbook
+                workbook = xlsxwriter.Workbook(filepath)
+                worksheet = workbook.add_worksheet("IGCSE GYM Report")
 
-                # Define styles
-                header_font = Font(bold=True, size=14)
-                section_font = Font(bold=True, size=12)
-                header_fill = PatternFill(start_color="46008B", end_color="46008B", fill_type="solid")
+                # Define formats
+                header_format = workbook.add_format({
+                    'bold': True,
+                    'font_size': 14,
+                    'bg_color': '#46008B',
+                    'font_color': 'white'
+                })
+                section_format = workbook.add_format({
+                    'bold': True,
+                    'font_size': 12
+                })
+                col_header_format = workbook.add_format({'bold': True})
 
-                row = 1
+                row = 0
 
                 # Main Header
-                ws.cell(row=row, column=1, value="IGCSE GYM - Workout Report").font = header_font
-                ws.cell(row=row, column=1).fill = header_fill
+                worksheet.write(row, 0, AppConstants.REPORT_TITLE, header_format)
                 row += 1
-                ws.cell(row=row, column=1, value=f'Generated: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}')
+                worksheet.write(row, 0, f'Generated: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}')
                 row += 2
 
                 # Exercise Database Section
-                ws.cell(row=row, column=1, value="EXERCISE DATABASE").font = section_font
+                worksheet.write(row, 0, "EXERCISE DATABASE", section_format)
                 row += 1
                 headers = ['Exercise Name', 'Category', 'Sets', 'Reps', 'Description']
-                for col, header in enumerate(headers, 1):
-                    ws.cell(row=row, column=col, value=header).font = Font(bold=True)
+                for col, header in enumerate(headers):
+                    worksheet.write(row, col, header, col_header_format)
                 row += 1
 
                 for exercise in exercises:
@@ -503,21 +624,21 @@ class ReportRepository:
                     unit = exercise.get('unit', 'reps')
                     reps_display = f"{reps} {unit}" if unit != 'reps' else str(reps)
 
-                    ws.cell(row=row, column=1, value=exercise['name'])
-                    ws.cell(row=row, column=2, value=exercise['category'])
-                    ws.cell(row=row, column=3, value=sets if not exercise['category'].startswith('Warmup') else 1)
-                    ws.cell(row=row, column=4, value=reps_display)
-                    ws.cell(row=row, column=5, value=exercise['description'])
+                    worksheet.write(row, 0, exercise['name'])
+                    worksheet.write(row, 1, exercise['category'])
+                    worksheet.write(row, 2, sets if not exercise['category'].startswith('Warmup') else 1)
+                    worksheet.write(row, 3, reps_display)
+                    worksheet.write(row, 4, exercise['description'])
                     row += 1
 
                 row += 1
 
                 # Workout Sessions Section
-                ws.cell(row=row, column=1, value="WORKOUT SESSIONS").font = section_font
+                worksheet.write(row, 0, "WORKOUT SESSIONS", section_format)
                 row += 1
                 session_headers = ['Date', 'Session Type', 'Exercise', 'Weight (kg)', 'Reps Completed', 'Sets']
-                for col, header in enumerate(session_headers, 1):
-                    ws.cell(row=row, column=col, value=header).font = Font(bold=True)
+                for col, header in enumerate(session_headers):
+                    worksheet.write(row, col, header, col_header_format)
                 row += 1
 
                 for session in sessions:
@@ -534,26 +655,27 @@ class ReportRepository:
 
                         if 'warmup' in session_name.lower():
                             session_type = 'Warmup'
-                            weight = 'N/A'
+                            weight_val = 'N/A'
                         else:
                             session_type = 'Strength Training'
+                            weight_val = weight
 
-                        ws.cell(row=row, column=1, value=session_date)
-                        ws.cell(row=row, column=2, value=session_type)
-                        ws.cell(row=row, column=3, value=exercise_name)
-                        ws.cell(row=row, column=4, value=weight)
-                        ws.cell(row=row, column=5, value=reps)
-                        ws.cell(row=row, column=6, value=sets if session_type != 'Warmup' else 'N/A')
+                        worksheet.write(row, 0, session_date)
+                        worksheet.write(row, 1, session_type)
+                        worksheet.write(row, 2, exercise_name)
+                        worksheet.write(row, 3, weight_val)
+                        worksheet.write(row, 4, reps)
+                        worksheet.write(row, 5, sets if session_type != 'Warmup' else 'N/A')
                         row += 1
 
                 row += 1
 
                 # Warmup Tracking Section
-                ws.cell(row=row, column=1, value="WARMUP COMPLETION LOG").font = section_font
+                worksheet.write(row, 0, "WARMUP COMPLETION LOG", section_format)
                 row += 1
                 warmup_headers = ['Date', 'Warmup Type', 'Exercises Completed', 'Total Time (estimated)']
-                for col, header in enumerate(warmup_headers, 1):
-                    ws.cell(row=row, column=col, value=header).font = Font(bold=True)
+                for col, header in enumerate(warmup_headers):
+                    worksheet.write(row, col, header, col_header_format)
                 row += 1
 
                 warmup_sessions = [s for s in sessions if 'warmup' in s.get('name', '').lower()]
@@ -569,58 +691,56 @@ class ReportRepository:
                     exercise_count = len(warmup.get('exercises', []))
                     estimated_time = f"{exercise_count * 2} minutes"
 
-                    ws.cell(row=row, column=1, value=warmup.get('date', 'Unknown'))
-                    ws.cell(row=row, column=2, value=warmup_type)
-                    ws.cell(row=row, column=3, value=exercise_count)
-                    ws.cell(row=row, column=4, value=estimated_time)
+                    worksheet.write(row, 0, warmup.get('date', 'Unknown'))
+                    worksheet.write(row, 1, warmup_type)
+                    worksheet.write(row, 2, exercise_count)
+                    worksheet.write(row, 3, estimated_time)
                     row += 1
 
                 row += 1
 
                 # Summary Statistics
-                ws.cell(row=row, column=1, value="SUMMARY STATISTICS").font = section_font
+                worksheet.write(row, 0, "SUMMARY STATISTICS", section_format)
                 row += 1
-                ws.cell(row=row, column=1, value="Total Workout Sessions")
-                ws.cell(row=row, column=2, value=len([s for s in sessions if 'warmup' not in s.get('name', '').lower()]))
+                worksheet.write(row, 0, "Total Workout Sessions")
+                worksheet.write(row, 1, len([s for s in sessions if 'warmup' not in s.get('name', '').lower()]))
                 row += 1
-                ws.cell(row=row, column=1, value="Total Warmup Sessions")
-                ws.cell(row=row, column=2, value=len(warmup_sessions))
+                worksheet.write(row, 0, "Total Warmup Sessions")
+                worksheet.write(row, 1, len(warmup_sessions))
                 row += 1
-                ws.cell(row=row, column=1, value="Total Exercises in Database")
-                ws.cell(row=row, column=2, value=len(exercises))
+                worksheet.write(row, 0, "Total Exercises in Database")
+                worksheet.write(row, 1, len(exercises))
                 row += 1
-                ws.cell(row=row, column=1, value="Report Date Range")
-                ws.cell(row=row, column=2, value="30 days")
+                worksheet.write(row, 0, "Report Date Range")
+                worksheet.write(row, 1, f"{AppConstants.REPORT_DAYS_RANGE} days")
 
                 # Auto-adjust column widths
-                for col in ws.columns:
-                    max_length = 0
-                    column = col[0].column_letter
-                    for cell in col:
-                        try:
-                            if len(str(cell.value)) > max_length:
-                                max_length = len(str(cell.value))
-                        except:
-                            pass
-                    adjusted_width = min(max_length + 2, 50)
-                    ws.column_dimensions[column].width = adjusted_width
+                worksheet.set_column(0, 0, 25)  # Exercise Name / Date
+                worksheet.set_column(1, 1, 20)  # Category / Type
+                worksheet.set_column(2, 2, 12)  # Sets
+                worksheet.set_column(3, 3, 15)  # Reps / Weight
+                worksheet.set_column(4, 4, 40)  # Description
 
-                # Save workbook
-                wb.save(filepath)
+                # Close workbook
+                workbook.close()
+                logger.info(f"Excel report created successfully: {filename}")
                 return filepath
 
             else:
-                # Fallback to CSV if openpyxl not available
+                # CSV export fallback (used when xlsxwriter is not available)
                 filename = f"IGCSE_GYM_Report_{timestamp}.csv"
                 filepath = os.path.join(downloads_dir, filename)
+                logger.info(f"Creating CSV report (xlsxwriter not available): {filepath}")
 
                 with open(filepath, 'w', newline='', encoding='utf-8') as csvfile:
                     writer = csv.writer(csvfile)
-                    writer.writerow(['IGCSE GYM - Workout Report'])
+
+                    # Header
+                    writer.writerow([AppConstants.REPORT_TITLE])
                     writer.writerow([f'Generated: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}'])
                     writer.writerow([])
 
-                    # Exercise Database Section (simplified for CSV)
+                    # Exercise Database Section
                     writer.writerow(['EXERCISE DATABASE'])
                     writer.writerow(['Exercise Name', 'Category', 'Sets', 'Reps', 'Description'])
                     for exercise in exercises:
@@ -637,23 +757,103 @@ class ReportRepository:
                             exercise['description']
                         ])
 
+                    writer.writerow([])
+
+                    # Workout Sessions Section
+                    writer.writerow(['WORKOUT SESSIONS'])
+                    writer.writerow(['Date', 'Session Type', 'Exercise', 'Weight (kg)', 'Reps Completed', 'Sets'])
+
+                    for session in sessions:
+                        session_date = session.get('date', 'Unknown')
+                        session_name = session.get('name', 'Workout')
+
+                        for exercise_log in session.get('exercises', []):
+                            exercise_info = next((ex for ex in exercises if ex['id'] == exercise_log.get('exercise_id')), {})
+                            exercise_name = exercise_log.get('name', exercise_info.get('name', 'Unknown'))
+
+                            weight = exercise_log.get('weight', 0)
+                            reps = exercise_log.get('reps', 0)
+                            sets = exercise_info.get('sets', 1)
+
+                            if 'warmup' in session_name.lower():
+                                session_type = 'Warmup'
+                                weight = 'N/A'
+                            else:
+                                session_type = 'Strength Training'
+
+                            writer.writerow([
+                                session_date,
+                                session_type,
+                                exercise_name,
+                                weight,
+                                reps,
+                                sets if session_type != 'Warmup' else 'N/A'
+                            ])
+
+                    writer.writerow([])
+
+                    # Warmup Tracking Section
+                    writer.writerow(['WARMUP COMPLETION LOG'])
+                    writer.writerow(['Date', 'Warmup Type', 'Exercises Completed', 'Total Time (estimated)'])
+
+                    warmup_sessions = [s for s in sessions if 'warmup' in s.get('name', '').lower()]
+                    for warmup in warmup_sessions:
+                        warmup_type = 'Unknown'
+                        if 'dynamic' in warmup.get('name', '').lower():
+                            warmup_type = 'Dynamic Mobility'
+                        elif 'stability' in warmup.get('name', '').lower():
+                            warmup_type = 'Stability Training'
+                        elif 'movement' in warmup.get('name', '').lower():
+                            warmup_type = 'Movement Integration'
+
+                        exercise_count = len(warmup.get('exercises', []))
+                        estimated_time = f"{exercise_count * 2} minutes"
+
+                        writer.writerow([
+                            warmup.get('date', 'Unknown'),
+                            warmup_type,
+                            exercise_count,
+                            estimated_time
+                        ])
+
+                    writer.writerow([])
+
+                    # Summary Statistics
+                    writer.writerow(['SUMMARY STATISTICS'])
+                    writer.writerow(['Metric', 'Value'])
+                    writer.writerow(['Total Workout Sessions', len([s for s in sessions if 'warmup' not in s.get('name', '').lower()])])
+                    writer.writerow(['Total Warmup Sessions', len(warmup_sessions)])
+                    writer.writerow(['Total Exercises in Database', len(exercises)])
+                    writer.writerow(['Report Date Range', f'{AppConstants.REPORT_DAYS_RANGE} days'])
+
+                logger.info(f"CSV report created successfully: {filename}")
                 return filepath
 
         except Exception as e:
+            logger.error(f"Excel export failed: {e}", exc_info=True)
             return f"Error: {str(e)}"
 
-    def _get_downloads_directory(self):
+    def _get_downloads_directory(self) -> str:
         """Get the appropriate downloads directory based on platform"""
         if platform == 'android':
             # Android Downloads folder
-            from android.storage import primary_external_storage_path
-            return os.path.join(primary_external_storage_path(), 'Download')
+            try:
+                from android.storage import primary_external_storage_path
+                android_downloads = os.path.join(primary_external_storage_path(), 'Download')
+                logger.info(f"Using Android downloads path: {android_downloads}")
+                return android_downloads
+            except Exception as e:
+                logger.warning(f"Failed to get Android storage path: {e}, using fallback")
+                # Fallback to app's internal storage
+                return os.path.join(os.path.expanduser("~"), 'Downloads')
         else:
             # Desktop Downloads folder
             home = os.path.expanduser("~")
             downloads = os.path.join(home, 'Downloads')
             if not os.path.exists(downloads):
                 downloads = os.path.join(home, 'Desktop')  # Fallback
+            if not os.path.exists(downloads):
+                downloads = home  # Last resort fallback
             return downloads
 
 class WorkoutScreen(BoxLayout):
@@ -670,7 +870,7 @@ class WorkoutScreen(BoxLayout):
 
         # Background
         with self.canvas.before:
-            Color(0.2, 0.2, 0.2, 1)  # Dark gray background
+            Color(*AppConstants.COLOR_BACKGROUND)
             self.rect = Rectangle(size=self.size, pos=self.pos)
         self.bind(size=self._update_rect, pos=self._update_rect)
 
@@ -810,32 +1010,98 @@ class WorkoutScreen(BoxLayout):
         return container
 
     def log_exercise(self, exercise, weight, reps):
-        """Log exercise completion"""
+        """Log exercise completion with input validation"""
         is_warmup = exercise['category'].startswith('Warmup')
 
         if is_warmup:
             # For warmup exercises, just log completion
-            reps_val = int(reps) if reps else exercise['reps']
-            self.completed_exercises.append({
-                'exercise_id': exercise['id'],
-                'name': exercise['name'],
-                'weight': 0,  # No weight for warmup
-                'reps': reps_val
-            })
+            try:
+                reps_val = int(reps) if reps else exercise['reps']
 
-            # Show confirmation
-            unit = exercise.get('unit', 'reps')
-            popup = Popup(
-                title='Exercise Completed',
-                content=Label(text=f"{exercise['name']}: {reps_val} {unit}"),
-                size_hint=(0.6, 0.4)
-            )
-            popup.open()
+                # Validate reps value
+                if reps_val <= AppConstants.MIN_REPS:
+                    popup = Popup(
+                        title='Invalid Input',
+                        content=Label(text='Reps must be greater than 0'),
+                        size_hint=AppConstants.POPUP_SMALL
+                    )
+                    popup.open()
+                    return
+
+                if reps_val > AppConstants.MAX_REPS:
+                    popup = Popup(
+                        title='Invalid Input',
+                        content=Label(text=f'Reps value seems too high (max: {AppConstants.MAX_REPS})'),
+                        size_hint=AppConstants.POPUP_SMALL
+                    )
+                    popup.open()
+                    return
+
+                self.completed_exercises.append({
+                    'exercise_id': exercise['id'],
+                    'name': exercise['name'],
+                    'weight': 0,  # No weight for warmup
+                    'reps': reps_val
+                })
+
+                # Show confirmation
+                unit = exercise.get('unit', 'reps')
+                popup = Popup(
+                    title='Exercise Completed',
+                    content=Label(text=f"{exercise['name']}: {reps_val} {unit}"),
+                    size_hint=(0.6, 0.4)
+                )
+                popup.open()
+            except (ValueError, TypeError):
+                popup = Popup(
+                    title='Invalid Input',
+                    content=Label(text='Please enter a valid number for reps'),
+                    size_hint=(0.6, 0.4)
+                )
+                popup.open()
 
         elif weight and reps:
             try:
                 weight_val = float(weight)
                 reps_val = int(reps)
+
+                # Validate weight value
+                if weight_val <= AppConstants.MIN_WEIGHT_KG:
+                    popup = Popup(
+                        title='Invalid Weight',
+                        content=Label(text='Weight must be greater than 0'),
+                        size_hint=AppConstants.POPUP_SMALL
+                    )
+                    popup.open()
+                    return
+
+                if weight_val > AppConstants.MAX_WEIGHT_KG:
+                    popup = Popup(
+                        title='Invalid Weight',
+                        content=Label(text=f'Weight seems too high (max: {AppConstants.MAX_WEIGHT_KG}kg)'),
+                        size_hint=AppConstants.POPUP_SMALL
+                    )
+                    popup.open()
+                    return
+
+                # Validate reps value
+                if reps_val <= AppConstants.MIN_REPS:
+                    popup = Popup(
+                        title='Invalid Reps',
+                        content=Label(text='Reps must be greater than 0'),
+                        size_hint=AppConstants.POPUP_SMALL
+                    )
+                    popup.open()
+                    return
+
+                if reps_val > AppConstants.MAX_REPS:
+                    popup = Popup(
+                        title='Invalid Reps',
+                        content=Label(text=f'Reps value seems too high (max: {AppConstants.MAX_REPS})'),
+                        size_hint=AppConstants.POPUP_SMALL
+                    )
+                    popup.open()
+                    return
 
                 self.app.storage.save_weight_log(exercise['id'], weight_val, reps_val)
                 self.completed_exercises.append({
@@ -855,23 +1121,23 @@ class WorkoutScreen(BoxLayout):
 
             except ValueError:
                 popup = Popup(
-                    title='Error',
-                    content=Label(text='Please enter valid weight'),
+                    title='Invalid Input',
+                    content=Label(text='Please enter valid numbers for weight and reps'),
                     size_hint=(0.6, 0.4)
                 )
                 popup.open()
         else:
             popup = Popup(
-                title='Error',
-                content=Label(text='Please enter weight'),
+                title='Missing Input',
+                content=Label(text='Please enter weight before logging'),
                 size_hint=(0.6, 0.4)
             )
             popup.open()
 
     def start_session_rest_timer(self, instance):
         """Start rest timer for the workout session"""
-        # 75 seconds as specified in Excel sheet Recovery column
-        rest_time = 75  # 75s rest time between exercises as per Excel
+        # Default rest time as specified in Excel sheet Recovery column
+        rest_time = AppConstants.DEFAULT_REST_TIME_SECONDS
 
         timer = RestTimerWidget(
             rest_time=rest_time,
@@ -920,7 +1186,7 @@ class ReportsScreen(BoxLayout):
 
         # Background
         with self.canvas.before:
-            Color(0.2, 0.2, 0.2, 1)  # Dark gray background
+            Color(*AppConstants.COLOR_BACKGROUND)
             self.rect = Rectangle(size=self.size, pos=self.pos)
         self.bind(size=self._update_rect, pos=self._update_rect)
 
@@ -934,7 +1200,7 @@ class ReportsScreen(BoxLayout):
         """Build reports interface"""
         # Title
         title = Label(
-            text='EXCEL REPORT DOWNLOAD',
+            text='WORKOUT REPORTS',
             font_size='32sp',
             bold=True,
             color=(1, 1, 1, 1),
@@ -943,9 +1209,14 @@ class ReportsScreen(BoxLayout):
         )
         self.add_widget(title)
 
-        # Description
+        # Description - dynamic based on availability
+        if XLSX_AVAILABLE:
+            desc_text = 'Download your complete workout data as an Excel file (.xlsx)\nwith formatting and colors.'
+        else:
+            desc_text = 'Download your complete workout data as a CSV file\nthat opens in Excel, Google Sheets, or any spreadsheet app.'
+
         desc = Label(
-            text='Download your complete workout data as an Excel file\nfor analysis and record keeping.',
+            text=desc_text,
             font_size='18sp',
             color=(0.8, 0.8, 0.8, 1),
             halign='center',
@@ -954,9 +1225,10 @@ class ReportsScreen(BoxLayout):
         )
         self.add_widget(desc)
 
-        # Download button
+        # Download button - dynamic text
+        button_text = '📥 DOWNLOAD EXCEL REPORT' if XLSX_AVAILABLE else '📥 DOWNLOAD REPORT (CSV)'
         download_btn = StyledButton(
-            text='📥 DOWNLOAD EXCEL REPORT',
+            text=button_text,
             size_hint_y=None,
             height=80
         )
@@ -976,13 +1248,14 @@ class ReportsScreen(BoxLayout):
 
         # Info section
         info_text = """
-The Excel report includes:
+The workout report includes:
 • Complete exercise database with sets/reps
 • All workout session records
 • Warmup completion tracking
 • Summary statistics
 • Date ranges and progress data
 
+""" + ("Excel format with formatting and colors." if XLSX_AVAILABLE else "CSV format - opens in Excel, Google Sheets, or any spreadsheet app.") + """
 File will be saved to your Downloads folder.
         """
 
@@ -1038,11 +1311,11 @@ SESSIONS COMPLETED:
         self.report_label.text_size = (self.width - 40, None)
 
     def download_excel_report(self, instance):
-        """Download Excel report file"""
+        """Download workout report file"""
         try:
-            self.status_label.text = 'Generating Excel report...'
+            self.status_label.text = 'Generating report...'
 
-            # Generate and save the Excel file
+            # Generate and save the report file
             filepath = self.app.report_repo.export_to_excel_format()
 
             if filepath.startswith('Error:'):
@@ -1057,9 +1330,15 @@ SESSIONS COMPLETED:
                 filename = os.path.basename(filepath)
                 self.status_label.text = f'Downloaded: {filename}'
 
+                # Dynamic success message
+                if XLSX_AVAILABLE:
+                    msg = f'Excel report saved as:\n{filename}\n\nFormatted .xlsx file\nCheck your Downloads folder'
+                else:
+                    msg = f'Report saved as:\n{filename}\n\nCSV format - opens in any spreadsheet app\nCheck your Downloads folder'
+
                 popup = Popup(
-                    title='Excel Report Downloaded!',
-                    content=Label(text=f'Report saved as:\n{filename}\n\nCheck your Downloads folder'),
+                    title='Report Downloaded!',
+                    content=Label(text=msg),
                     size_hint=(0.8, 0.5)
                 )
                 popup.open()
@@ -1089,7 +1368,7 @@ class WarmupMenuScreen(BoxLayout):
 
         # Background
         with self.canvas.before:
-            Color(0.2, 0.2, 0.2, 1)  # Dark gray background
+            Color(*AppConstants.COLOR_BACKGROUND)
             self.rect = Rectangle(size=self.size, pos=self.pos)
         self.bind(size=self._update_rect, pos=self._update_rect)
 
@@ -1243,7 +1522,7 @@ IGCSE IURI GYM FILES
 📊 Recent Activity:
 • {len(self.storage.get_workout_history(7))} workouts this week
 • {len(self.storage.get_exercises())} exercises in database
-• All data encrypted and stored securely
+• All data stored locally in JSON format
 
 Select a workout type above to begin!
         """
