@@ -20,7 +20,7 @@
   android.permissions = INTERNET,MANAGE_EXTERNAL_STORAGE,WRITE_EXTERNAL_STORAGE,READ_EXTERNAL_STORAGE
   android.api = 33
   android.minapi = 21
-  android.ndk = 25b
+  # android.ndk = 25b  # Commented out to let p4a use recommended version
   android.sdk = 33
   android.build_tools_version = 33.0.2
   android.archs = arm64-v8a,armeabi-v7a
