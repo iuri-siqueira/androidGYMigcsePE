@@ -1387,16 +1387,42 @@ class ReportRepository:
     def _get_downloads_directory(self) -> str:
         """Get the appropriate downloads directory based on platform"""
         if platform == 'android':
-            # Android Downloads folder
+            # Android storage handling with multiple fallbacks
             try:
-                from android.storage import primary_external_storage_path
-                android_downloads = os.path.join(primary_external_storage_path(), 'Download')
-                logger.info(f"Using Android downloads path: {android_downloads}")
-                return android_downloads
+                from android.storage import primary_external_storage_path, app_storage_path
+
+                # Try to use Downloads folder first (requires MANAGE_EXTERNAL_STORAGE on API 30+)
+                try:
+                    android_downloads = os.path.join(primary_external_storage_path(), 'Download')
+                    if os.path.exists(android_downloads) and os.access(android_downloads, os.W_OK):
+                        logger.info(f"Using Android downloads path: {android_downloads}")
+                        return android_downloads
+                except Exception as e:
+                    logger.warning(f"Cannot access Downloads folder: {e}")
+
+                # Fallback to app's external storage (doesn't need special permissions)
+                try:
+                    app_external = app_storage_path()
+                    if app_external and os.path.exists(app_external):
+                        downloads_alt = os.path.join(app_external, 'downloads')
+                        os.makedirs(downloads_alt, exist_ok=True)
+                        logger.info(f"Using app external storage: {downloads_alt}")
+                        return downloads_alt
+                except Exception as e:
+                    logger.warning(f"Cannot access app external storage: {e}")
+
+                # Final fallback to app's internal storage
+                app_internal = os.path.join(os.path.expanduser("~"), 'downloads')
+                os.makedirs(app_internal, exist_ok=True)
+                logger.info(f"Using app internal storage: {app_internal}")
+                return app_internal
+
             except Exception as e:
-                logger.warning(f"Failed to get Android storage path: {e}, using fallback")
-                # Fallback to app's internal storage
-                return os.path.join(os.path.expanduser("~"), 'Downloads')
+                logger.error(f"Failed to get Android storage path: {e}, using internal storage")
+                # Absolute fallback
+                fallback = os.path.join(os.path.expanduser("~"), 'downloads')
+                os.makedirs(fallback, exist_ok=True)
+                return fallback
         else:
             # Desktop Downloads folder
             home = os.path.expanduser("~")
@@ -2006,6 +2032,69 @@ class IGCSEGymApp(App):
         self.show_main_screen()
 
         return self.main_layout
+
+    def on_start(self):
+        """Called when the app starts - request permissions on Android"""
+        super().on_start()
+        if platform == 'android':
+            self.request_android_permissions()
+
+    def request_android_permissions(self):
+        """Request necessary permissions on Android"""
+        try:
+            from android.permissions import request_permissions, check_permission, Permission
+
+            # List of permissions to request
+            permissions = []
+
+            # Check and request MANAGE_EXTERNAL_STORAGE for Android 11+ (API 30+)
+            if not check_permission(Permission.WRITE_EXTERNAL_STORAGE):
+                permissions.append(Permission.WRITE_EXTERNAL_STORAGE)
+
+            if not check_permission(Permission.READ_EXTERNAL_STORAGE):
+                permissions.append(Permission.READ_EXTERNAL_STORAGE)
+
+            if not check_permission(Permission.INTERNET):
+                permissions.append(Permission.INTERNET)
+
+            # Request permissions if needed
+            if permissions:
+                logger.info(f"Requesting Android permissions: {permissions}")
+                request_permissions(permissions, self.on_permissions_callback)
+            else:
+                logger.info("All permissions already granted")
+
+        except Exception as e:
+            logger.warning(f"Permission request failed: {e}")
+            # App will continue to work with internal storage
+
+    def on_permissions_callback(self, permissions, grant_results):
+        """Handle permission request results"""
+        try:
+            granted = [p for p, g in zip(permissions, grant_results) if g]
+            denied = [p for p, g in zip(permissions, grant_results) if not g]
+
+            if granted:
+                logger.info(f"Permissions granted: {granted}")
+
+            if denied:
+                logger.warning(f"Permissions denied: {denied}")
+                # Show info popup that app will use internal storage
+                content = Label(
+                    text="Storage permission not granted.\nReports will be saved to app's internal storage.",
+                    halign='center'
+                )
+                popup = Popup(
+                    title='Storage Access',
+                    content=content,
+                    size_hint=(0.8, 0.4)
+                )
+                # Auto-dismiss after 3 seconds
+                Clock.schedule_once(lambda dt: popup.dismiss(), 3)
+                popup.open()
+
+        except Exception as e:
+            logger.error(f"Error in permission callback: {e}")
 
     def show_main_screen(self):
         """Display main menu screen"""
