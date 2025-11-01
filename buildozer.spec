@@ -52,7 +52,9 @@ android.api = 33
 android.minapi = 21
 
 # (str) Android NDK version to use
+# Leave blank to auto-download or use system NDK
 android.ndk = 25b
+android.ndk_path =
 
 # (bool) Use --private data storage (True) or --dir public storage (False)
 android.private_storage = True
@@ -146,14 +148,15 @@ android.manifest.application_attrs = android:requestLegacyExternalStorage="true"
 # p4a.fork = kivy
 
 # (str) python-for-android branch to use, defaults to master
-# Using develop branch for Python 3.11+ compatibility and latest fixes
+# Using develop for Python 3.11+ support
 p4a.branch = develop
 
 # (str) python-for-android git clone directory (if empty, it will be automatically cloned from github)
 # p4a.source_dir =
 
 # (str) The directory in which python-for-android should look for your own build recipes (if any)
-# p4a.local_recipes =
+# Custom recipe for xlsxwriter to ensure it builds correctly
+p4a.local_recipes = ./p4a-recipes
 
 # (str) Filename to the hook for p4a
 # p4a.hook =
@@ -167,7 +170,8 @@ p4a.bootstrap = sdl2
 # p4a.port =
 
 # (str) extra command line arguments to pass when invoking pythonforandroid.toolchain
-# p4a.extra_args =
+# Add --ignore-setup-py to avoid compilation issues with pure Python packages
+p4a.extra_args = --ignore-setup-py
 
 #
 # iOS specific
