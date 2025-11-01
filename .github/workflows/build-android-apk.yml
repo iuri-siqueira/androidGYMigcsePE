@@ -20,6 +20,7 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 120  # Add timeout to prevent infinite builds
 
     steps:
       - name: Checkout code
@@ -28,16 +29,26 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: '3.11.6'  # Match buildozer.spec
+          cache: 'pip'
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+          cache: 'gradle'
 
       - name: Install system dependencies
         run: |
-          sudo apt-get update
-          sudo apt-get install -y \
+          echo "::group::Installing system dependencies"
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
             python3-pip \
             build-essential \
             git \
             unzip \
+            zip \
             openjdk-17-jdk \
             autoconf \
             libtool \
@@ -50,54 +61,164 @@ jobs:
             libffi-dev \
             libssl-dev \
             libsqlite3-dev \
+            libltdl-dev \
             python3-setuptools \
-            python3-wheel
+            python3-wheel \
+            ccache \
+            ninja-build \
+            lld \
+            llvm
+          echo "::endgroup::"
 
-      - name: Install Buildozer
+      - name: Verify Java installation
         run: |
-          pip3 install --upgrade buildozer cython
+          echo "::group::Java verification"
+          java -version
+          javac -version
+          echo "JAVA_HOME=$JAVA_HOME"
+          echo "::endgroup::"
+
+      - name: Install Python dependencies
+        run: |
+          echo "::group::Installing Python dependencies"
+          python3 -m pip install --upgrade pip setuptools wheel
+          python3 -m pip install --upgrade \
+            buildozer==1.5.0 \
+            cython==0.29.36 \
+            virtualenv \
+            sh
+          python3 -m pip list
+          echo "::endgroup::"
 
       - name: Set environment variables
         run: |
           echo "BUILDOZER_WARN_ON_ROOT=0" >> $GITHUB_ENV
           echo "ANDROIDSDK=$HOME/.buildozer/android/platform/android-sdk" >> $GITHUB_ENV
-          echo "ANDROIDNDK=$HOME/.buildozer/android/platform/android-ndk-r28c" >> $GITHUB_ENV
+          echo "ANDROIDNDK=$HOME/.buildozer/android/platform/android-ndk-r25b" >> $GITHUB_ENV
           echo "ANDROIDAPI=33" >> $GITHUB_ENV
+          echo "ANDROIDMINAPI=21" >> $GITHUB_ENV
+          echo "USE_SDK_WRAPPER=1" >> $GITHUB_ENV
+          echo "GRADLE_OPTS=-Dorg.gradle.jvmargs=-Xmx4096m -Dorg.gradle.daemon=false" >> $GITHUB_ENV
+          echo "PYTHONUNBUFFERED=1" >> $GITHUB_ENV
 
       - name: Cache Buildozer global directory
         uses: actions/cache@v4
         with:
-          path: .buildozer
-          key: buildozer-${{ hashFiles('buildozer.spec') }}
+          path: ~/.buildozer
+          key: buildozer-global-${{ runner.os }}-${{ hashFiles('buildozer.spec') }}-v3
           restore-keys: |
-            buildozer-
+            buildozer-global-${{ runner.os }}-v3
+            buildozer-global-${{ runner.os }}-
 
-      - name: Cache Buildozer SDK/NDK
+      - name: Cache Buildozer local directory
         uses: actions/cache@v4
         with:
-          path: ~/.buildozer
-          key: buildozer-global-${{ runner.os }}-ndk-r28c
+          path: .buildozer
+          key: buildozer-local-${{ hashFiles('buildozer.spec') }}-v3
           restore-keys: |
-            buildozer-global-${{ runner.os }}-
+            buildozer-local-v3
+
+      - name: Cache Gradle
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-${{ runner.os }}-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}-v3
+          restore-keys: |
+            gradle-${{ runner.os }}-v3
+
+      - name: Pre-create buildozer directories
+        run: |
+          echo "::group::Creating buildozer directories"
+          mkdir -p ~/.buildozer/android/platform
+          mkdir -p .buildozer
+          echo "::endgroup::"
 
       - name: Apply SDL2 patches (if needed)
         run: |
           if [ -f apply_sdl2_patches.sh ]; then
+            echo "::group::Applying SDL2 patches"
             chmod +x apply_sdl2_patches.sh
-            ./apply_sdl2_patches.sh || true
+            ./apply_sdl2_patches.sh || echo "SDL2 patches not needed or already applied"
+            echo "::endgroup::"
           fi
 
-      - name: Build Android APK
+      - name: Verify buildozer configuration
         run: |
+          echo "::group::Buildozer configuration"
+          cat buildozer.spec
+          buildozer --version
+          echo "::endgroup::"
+
+      - name: Clean previous build artifacts (if exists)
+        run: |
+          echo "::group::Cleaning previous artifacts"
+          rm -rf .buildozer/android/platform/build-*
+          rm -rf bin/*.apk
+          echo "::endgroup::"
+
+      - name: Build Android APK (with retry)
+        run: |
+          echo "::group::Building Android APK"
           export BUILDOZER_WARN_ON_ROOT=0
-          buildozer android debug
+
+          # Function to build with retry logic
+          build_with_retry() {
+            local max_attempts=3
+            local attempt=1
+            local delay=60
+
+            while [ $attempt -le $max_attempts ]; do
+              echo "Build attempt $attempt of $max_attempts"
+
+              if buildozer -v android debug; then
+                echo "Build successful on attempt $attempt"
+                return 0
+              else
+                local exit_code=$?
+                echo "Build failed with exit code $exit_code on attempt $attempt"
+
+                if [ $attempt -lt $max_attempts ]; then
+                  echo "Waiting ${delay} seconds before retry..."
+                  sleep $delay
+                  delay=$((delay * 2))  # Exponential backoff
+                  attempt=$((attempt + 1))
+                else
+                  echo "All build attempts failed"
+                  return $exit_code
+                fi
+              fi
+            done
+          }
+
+          # Execute build with retry
+          build_with_retry
+          echo "::endgroup::"
+
+      - name: Verify APK was created
+        run: |
+          echo "::group::Verifying APK"
+          if [ -f bin/*.apk ]; then
+            ls -lh bin/*.apk
+            file bin/*.apk
+            echo "APK created successfully!"
+          else
+            echo "ERROR: APK file not found!"
+            echo "Listing bin directory:"
+            ls -la bin/ || echo "bin directory does not exist"
+            exit 1
+          fi
+          echo "::endgroup::"
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
+        if: success()
         with:
           name: android-apk-${{ github.run_number }}
           path: bin/*.apk
           retention-days: 30
+          if-no-files-found: error
 
       - name: Upload build logs
         if: always()
@@ -105,23 +226,58 @@ jobs:
         with:
           name: build-logs-${{ github.run_number }}
           path: |
-            .buildozer/android/platform/build-*/build.log
-            .buildozer/android/platform/python-for-android/dist/**/*.log
+            .buildozer/**/*.log
+            .buildozer/**/logcat*.txt
           retention-days: 7
           if-no-files-found: ignore
 
-      - name: Get APK info
-        if: success()
+      - name: Generate build summary
+        if: always()
         run: |
-          echo "### Build Success! 🎉" >> $GITHUB_STEP_SUMMARY
+          echo "## Build Summary" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "APK files generated:" >> $GITHUB_STEP_SUMMARY
-          ls -lh bin/*.apk >> $GITHUB_STEP_SUMMARY || echo "No APK found" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
+
           if [ -f bin/*.apk ]; then
+            echo "### ✅ Build Success!" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "**APK Details:**" >> $GITHUB_STEP_SUMMARY
             for apk in bin/*.apk; do
-              echo "**File:** \`$(basename $apk)\`" >> $GITHUB_STEP_SUMMARY
-              echo "**Size:** $(ls -lh $apk | awk '{print $5}')" >> $GITHUB_STEP_SUMMARY
-              echo "" >> $GITHUB_STEP_SUMMARY
+              echo "- **File:** \`$(basename $apk)\`" >> $GITHUB_STEP_SUMMARY
+              echo "- **Size:** $(ls -lh $apk | awk '{print $5}')" >> $GITHUB_STEP_SUMMARY
+              echo "- **Type:** $(file -b $apk)" >> $GITHUB_STEP_SUMMARY
             done
+          else
+            echo "### ❌ Build Failed" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "**Error:** APK file not created" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "**Please check the build logs for details.**" >> $GITHUB_STEP_SUMMARY
+
+            # Try to find and display error messages
+            if [ -f .buildozer/android/platform/build-*/build.log ]; then
+              echo "" >> $GITHUB_STEP_SUMMARY
+              echo "**Last 50 lines of build log:**" >> $GITHUB_STEP_SUMMARY
+              echo '```' >> $GITHUB_STEP_SUMMARY
+              tail -n 50 .buildozer/android/platform/build-*/build.log >> $GITHUB_STEP_SUMMARY || echo "Could not read build log"
+              echo '```' >> $GITHUB_STEP_SUMMARY
+            fi
           fi
+
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "---" >> $GITHUB_STEP_SUMMARY
+          echo "**Build Configuration:**" >> $GITHUB_STEP_SUMMARY
+          echo "- Python: $(python3 --version)" >> $GITHUB_STEP_SUMMARY
+          echo "- Java: $(java -version 2>&1 | head -n 1)" >> $GITHUB_STEP_SUMMARY
+          echo "- Buildozer: $(buildozer --version 2>&1 | head -n 1)" >> $GITHUB_STEP_SUMMARY
+          echo "- Branch: ${{ github.ref_name }}" >> $GITHUB_STEP_SUMMARY
+          echo "- Commit: ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
+
+      - name: Cleanup on failure
+        if: failure()
+        run: |
+          echo "::group::Cleanup on failure"
+          echo "Preserving logs and removing large build artifacts..."
+          # Keep logs but remove large binaries
+          find .buildozer -name "*.so" -delete || true
+          find .buildozer -name "*.a" -delete || true
+          echo "::endgroup::"

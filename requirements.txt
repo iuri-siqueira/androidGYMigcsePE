@@ -1,7 +1,17 @@
-# Python dependencies for IGCSE GYM Enterprise Edition
-kivy==2.3.0
-kivymd>=1.1.1
-xlsxwriter>=3.0.0
-python-for-android
+# Python requirements for IGCSE GYM Android App
+# These versions are tested and known to work together
+
+# Build tools
 buildozer==1.5.0
 cython==0.29.36
+
+# Core dependencies (matching buildozer.spec)
+kivy==2.3.0
+xlsxwriter==3.1.9
+
+# Android-specific
+pyjnius==1.6.1
+
+# Build utilities
+virtualenv
+sh
