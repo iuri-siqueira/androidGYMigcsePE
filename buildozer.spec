@@ -42,7 +42,8 @@ fullscreen = 0
 
 # (list) Permissions
 # Storage permissions for saving workout reports
-android.permissions = WRITE_EXTERNAL_STORAGE,READ_EXTERNAL_STORAGE,INTERNET
+# For Android 11+ (API 30+), we also need MANAGE_EXTERNAL_STORAGE for full access
+android.permissions = WRITE_EXTERNAL_STORAGE,READ_EXTERNAL_STORAGE,INTERNET,MANAGE_EXTERNAL_STORAGE
 
 # (int) Target Android API, should be as high as possible.
 android.api = 33
@@ -113,6 +114,13 @@ android.manifest.launch_mode = standard
 
 # (list) Android application meta-data to set (key=value format)
 android.meta_data = com.google.android.gms.version=12451000
+
+# (str) Android manifest attributes
+# Request legacy external storage for Android 10 (API 29) compatibility
+android.manifest.application_attrs = android:requestLegacyExternalStorage="true"
+
+# (list) Android additional features
+# android.features = android.hardware.usb.host
 
 # (str) Android logcat filters to use
 # android.logcat_filters = *:S python:D

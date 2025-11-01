@@ -18,6 +18,21 @@ except ImportError:
 from datetime import datetime, timedelta
 from kivy.utils import platform
 
+# Android-specific imports for permissions and storage
+if platform == 'android':
+    from android.permissions import request_permissions, Permission, check_permission
+    from android.storage import primary_external_storage_path, app_storage_path
+else:
+    # Stub for non-Android platforms
+    def request_permissions(perms):
+        pass
+    def check_permission(perm):
+        return True
+    class Permission:
+        WRITE_EXTERNAL_STORAGE = "android.permission.WRITE_EXTERNAL_STORAGE"
+        READ_EXTERNAL_STORAGE = "android.permission.READ_EXTERNAL_STORAGE"
+        MANAGE_EXTERNAL_STORAGE = "android.permission.MANAGE_EXTERNAL_STORAGE"
+
 # Configure logging
 def setup_logging():
     """Setup application logging with rotating file handler"""
@@ -62,6 +77,80 @@ def setup_logging():
 # Initialize logger
 logger = setup_logging()
 logger.info("IGCSE GYM Application Starting")
+
+# Android Permissions Manager
+class PermissionsManager:
+    """Manages Android runtime permissions"""
+
+    @staticmethod
+    def request_storage_permissions():
+        """Request storage permissions on Android"""
+        if platform == 'android':
+            logger.info("Requesting Android storage permissions")
+            permissions = [
+                Permission.WRITE_EXTERNAL_STORAGE,
+                Permission.READ_EXTERNAL_STORAGE,
+            ]
+
+            # For Android 11+ (API 30+), also request MANAGE_EXTERNAL_STORAGE if available
+            try:
+                permissions.append(Permission.MANAGE_EXTERNAL_STORAGE)
+            except AttributeError:
+                logger.info("MANAGE_EXTERNAL_STORAGE not available on this Android version")
+
+            request_permissions(permissions)
+            logger.info("Storage permissions requested")
+        else:
+            logger.info("Not on Android - skipping permission request")
+
+    @staticmethod
+    def check_storage_permissions():
+        """Check if storage permissions are granted"""
+        if platform == 'android':
+            write_perm = check_permission(Permission.WRITE_EXTERNAL_STORAGE)
+            read_perm = check_permission(Permission.READ_EXTERNAL_STORAGE)
+
+            if not (write_perm and read_perm):
+                logger.warning("Storage permissions not granted")
+                return False
+
+            logger.info("Storage permissions granted")
+            return True
+        else:
+            # Non-Android platforms don't need permission checks
+            return True
+
+    @staticmethod
+    def get_safe_storage_path():
+        """Get safe storage path for current Android version"""
+        if platform == 'android':
+            try:
+                # Try to use external storage (Downloads folder)
+                base_path = primary_external_storage_path()
+                downloads_path = os.path.join(base_path, 'Download')
+
+                # Check if we can write to this location
+                if os.path.exists(downloads_path) and os.access(downloads_path, os.W_OK):
+                    logger.info(f"Using external Downloads path: {downloads_path}")
+                    return downloads_path
+                else:
+                    # Fallback to app-specific external storage (doesn't require permission on Android 10+)
+                    logger.warning("Cannot access Downloads, using app storage")
+                    return app_storage_path()
+
+            except Exception as e:
+                logger.error(f"Error getting storage path: {e}")
+                # Last resort: use app's internal storage
+                return app_storage_path()
+        else:
+            # Desktop platforms
+            home = os.path.expanduser("~")
+            downloads = os.path.join(home, 'Downloads')
+            if not os.path.exists(downloads):
+                downloads = os.path.join(home, 'Desktop')
+            if not os.path.exists(downloads):
+                downloads = home
+            return downloads
 
 # Application Constants
 class AppConstants:
@@ -835,26 +924,8 @@ class ReportRepository:
 
     def _get_downloads_directory(self) -> str:
         """Get the appropriate downloads directory based on platform"""
-        if platform == 'android':
-            # Android Downloads folder
-            try:
-                from android.storage import primary_external_storage_path
-                android_downloads = os.path.join(primary_external_storage_path(), 'Download')
-                logger.info(f"Using Android downloads path: {android_downloads}")
-                return android_downloads
-            except Exception as e:
-                logger.warning(f"Failed to get Android storage path: {e}, using fallback")
-                # Fallback to app's internal storage
-                return os.path.join(os.path.expanduser("~"), 'Downloads')
-        else:
-            # Desktop Downloads folder
-            home = os.path.expanduser("~")
-            downloads = os.path.join(home, 'Downloads')
-            if not os.path.exists(downloads):
-                downloads = os.path.join(home, 'Desktop')  # Fallback
-            if not os.path.exists(downloads):
-                downloads = home  # Last resort fallback
-            return downloads
+        # Use the improved permissions manager to get safe storage path
+        return PermissionsManager.get_safe_storage_path()
 
 class WorkoutScreen(BoxLayout):
     """Main workout screen with all features"""
@@ -1313,6 +1384,19 @@ SESSIONS COMPLETED:
     def download_excel_report(self, instance):
         """Download workout report file"""
         try:
+            # Check storage permissions first
+            if not PermissionsManager.check_storage_permissions():
+                logger.warning("Storage permissions not granted, requesting...")
+                PermissionsManager.request_storage_permissions()
+
+                # Show warning to user
+                popup = Popup(
+                    title='Permissions Required',
+                    content=Label(text='Please grant storage permissions\nto download reports.\n\nTrying to download anyway...'),
+                    size_hint=(0.8, 0.4)
+                )
+                popup.open()
+
             self.status_label.text = 'Generating report...'
 
             # Generate and save the report file
@@ -1445,6 +1529,10 @@ class IGCSEGymApp(App):
     """Main application class with ALL features"""
 
     def build(self):
+        # Request storage permissions on Android (must be done early)
+        logger.info("Initializing IGCSE GYM Application")
+        PermissionsManager.request_storage_permissions()
+
         # Initialize storage and repositories
         self.storage = DataStorage()
         self.workout_repo = WorkoutRepository(self.storage)
@@ -1454,6 +1542,7 @@ class IGCSEGymApp(App):
         self.main_layout = BoxLayout()
         self.show_main_screen()
 
+        logger.info("IGCSE GYM Application initialized successfully")
         return self.main_layout
 
     def show_main_screen(self):
