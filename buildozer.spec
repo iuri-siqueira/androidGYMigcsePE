@@ -155,8 +155,7 @@ p4a.branch = develop
 # p4a.source_dir =
 
 # (str) The directory in which python-for-android should look for your own build recipes (if any)
-# Custom recipe for xlsxwriter to ensure it builds correctly
-p4a.local_recipes = ./p4a-recipes
+# p4a.local_recipes =
 
 # (str) Filename to the hook for p4a
 # p4a.hook =
@@ -170,8 +169,7 @@ p4a.bootstrap = sdl2
 # p4a.port =
 
 # (str) extra command line arguments to pass when invoking pythonforandroid.toolchain
-# Add --ignore-setup-py to avoid compilation issues with pure Python packages
-p4a.extra_args = --ignore-setup-py
+# p4a.extra_args =
 
 #
 # iOS specific
