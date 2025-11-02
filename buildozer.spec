@@ -22,8 +22,8 @@ version = 1.0
 source.main = main_android.py
 
 # (list) Application requirements
-# xlsxwriter is pure Python - no C compilation needed
-requirements = python3,kivy==2.3.0,xlsxwriter
+# Note: xlsxwriter causes build issues - app uses CSV export (works in Excel)
+requirements = python3,kivy==2.3.0
 
 # (str) Custom source dirs for requirements
 # requirements.source.kivy = ../../kivy
