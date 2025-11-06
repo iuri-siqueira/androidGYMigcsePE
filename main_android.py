@@ -1019,20 +1019,20 @@ class WorkoutScreen(BoxLayout):
         # Top row: Complete and Timer buttons
         top_row = BoxLayout(size_hint_y=None, height=70, spacing=10)
 
-        complete_btn = StyledButton(text='COMPLETE\nWORKOUT', font_size='16sp')
+        complete_btn = StyledButton(text='COMPLETE\nWORKOUT', font_size='13sp')
         complete_btn.bind(on_press=self.complete_workout)
         top_row.add_widget(complete_btn)
 
         # Add REST TIMER button only for strength training sessions (not warmup)
         if not self.session_type.startswith('warmup'):
-            rest_timer_btn = StyledButton(text='⏱️ REST\nTIMER', font_size='16sp')
+            rest_timer_btn = StyledButton(text='⏱️ REST\nTIMER', font_size='13sp')
             rest_timer_btn.bind(on_press=self.start_session_rest_timer)
             top_row.add_widget(rest_timer_btn)
 
         button_container.add_widget(top_row)
 
         # Bottom row: Back button
-        back_btn = StyledButton(text='← GO BACK', font_size='18sp')
+        back_btn = StyledButton(text='← GO BACK', font_size='16sp')
         back_btn.bind(on_press=self.go_back)
         button_container.add_widget(back_btn)
 
@@ -1040,8 +1040,11 @@ class WorkoutScreen(BoxLayout):
 
     def create_exercise_widget(self, exercise):
         """Create widget for individual exercise"""
-        # Optimized height and spacing for full screen layout
-        container = BoxLayout(orientation='horizontal', size_hint_y=None, height=95, spacing=8)
+        # Adaptive height based on screen size (min 85, max 110)
+        screen_height = Window.height
+        adaptive_height = min(max(screen_height / 8, 85), 110)
+
+        container = BoxLayout(orientation='horizontal', size_hint_y=None, height=adaptive_height, spacing=8)
 
         # Exercise info - use more screen width (60% instead of 55%)
         info_layout = BoxLayout(orientation='vertical', size_hint_x=0.6, spacing=3)
@@ -1462,57 +1465,88 @@ SESSIONS COMPLETED:
     def download_excel_report(self, instance):
         """Download workout report file"""
         try:
-            # Check storage permissions first
-            if not PermissionsManager.check_storage_permissions():
-                logger.warning("Storage permissions not granted, requesting...")
-                PermissionsManager.request_storage_permissions()
+            # Check and request storage permissions first - CRITICAL
+            if platform == 'android':
+                if not PermissionsManager.check_storage_permissions():
+                    logger.warning("Storage permissions not granted, requesting now...")
 
-                # Show warning to user
-                popup = Popup(
-                    title='Permissions Required',
-                    content=Label(text='Please grant storage permissions\nto download reports.\n\nTrying to download anyway...'),
-                    size_hint=(0.8, 0.4)
-                )
-                popup.open()
+                    # Request permissions with explicit popup
+                    PermissionsManager.request_storage_permissions()
+
+                    # Show instructions to user
+                    popup = Popup(
+                        title='⚠️ Permissions Required',
+                        content=Label(
+                            text='IMPORTANT: Android will ask for storage permissions.\n\n'
+                                 'Please ALLOW to download Excel reports.\n\n'
+                                 'After allowing, tap "DOWNLOAD EXCEL" again.',
+                            halign='center'
+                        ),
+                        size_hint=(0.85, 0.45)
+                    )
+                    popup.open()
+                    return  # Don't continue until permissions granted
+
+                # Double-check permissions were actually granted
+                if not PermissionsManager.check_storage_permissions():
+                    popup = Popup(
+                        title='Permission Denied',
+                        content=Label(text='Cannot download without storage permissions.\n\nPlease enable in Android Settings.'),
+                        size_hint=(0.8, 0.4)
+                    )
+                    popup.open()
+                    return
 
             self.status_label.text = 'Generating report...'
 
             # Generate and save the report file
             filepath = self.app.report_repo.export_to_excel_format()
 
-            if filepath.startswith('Error:'):
-                self.status_label.text = 'Download failed'
-                popup = Popup(
-                    title='Download Error',
-                    content=Label(text=filepath),
-                    size_hint=(0.7, 0.4)
-                )
-                popup.open()
-            else:
-                filename = os.path.basename(filepath)
-                self.status_label.text = f'Downloaded: {filename}'
+            # Check if download actually succeeded
+            if filepath.startswith('Error:') or not filepath or not os.path.exists(filepath):
+                self.status_label.text = 'Download FAILED'
 
-                # Dynamic success message
-                if XLSX_AVAILABLE:
-                    msg = f'Excel report saved as:\n{filename}\n\nFormatted .xlsx file\nCheck your Downloads folder'
-                else:
-                    msg = f'Report saved as:\n{filename}\n\nCSV format - opens in any spreadsheet app\nCheck your Downloads folder'
+                error_msg = filepath if filepath.startswith('Error:') else 'File was not created. Permission denied or storage full.'
 
                 popup = Popup(
-                    title='Report Downloaded!',
-                    content=Label(text=msg),
+                    title='❌ Download Failed',
+                    content=Label(
+                        text=f'{error_msg}\n\nCheck:\n• Storage permissions enabled\n• Enough free space',
+                        halign='center'
+                    ),
                     size_hint=(0.8, 0.5)
                 )
                 popup.open()
+                logger.error(f"Export failed: {filepath}")
+            else:
+                # SUCCESS - file actually exists
+                filename = os.path.basename(filepath)
+                filesize = os.path.getsize(filepath) / 1024  # KB
+                self.status_label.text = f'✓ Downloaded: {filename}'
+
+                # Dynamic success message
+                if XLSX_AVAILABLE:
+                    msg = f'✓ Excel report saved!\n\n{filename}\n({filesize:.1f} KB)\n\nFormatted .xlsx file\nLocation: Downloads folder'
+                else:
+                    msg = f'✓ Report saved!\n\n{filename}\n({filesize:.1f} KB)\n\nCSV format\nLocation: Downloads folder'
+
+                popup = Popup(
+                    title='✓ Download Complete!',
+                    content=Label(text=msg, halign='center'),
+                    size_hint=(0.8, 0.55)
+                )
+                popup.open()
+                logger.info(f"Export successful: {filepath} ({filesize:.1f} KB)")
 
         except Exception as e:
-            self.status_label.text = 'Download failed'
+            self.status_label.text = 'Download ERROR'
             popup = Popup(
-                title='Download Error',
-                content=Label(text=f'Failed to generate report:\n{str(e)}'),
-                size_hint=(0.7, 0.4)
+                title='❌ Download Error',
+                content=Label(text=f'Failed to generate report:\n\n{str(e)}\n\nCheck storage permissions.'),
+                size_hint=(0.8, 0.5)
             )
             popup.open()
+            logger.error(f"Export exception: {e}", exc_info=True)
 
     def go_back(self, instance):
         """Return to main menu"""
