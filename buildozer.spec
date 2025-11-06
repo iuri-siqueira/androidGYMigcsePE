@@ -22,8 +22,8 @@ version = 1.0
 source.main = main_android.py
 
 # (list) Application requirements
-# Note: xlsxwriter causes build issues - app uses CSV export (works in Excel)
-requirements = python3,kivy==2.3.0
+# xlsxwriter is pure Python - no C compilation needed
+requirements = python3==3.10,kivy==2.3.0,xlsxwriter
 
 # (str) Custom source dirs for requirements
 # requirements.source.kivy = ../../kivy
@@ -148,8 +148,8 @@ android.manifest.application_attrs = android:requestLegacyExternalStorage="true"
 # p4a.fork = kivy
 
 # (str) python-for-android branch to use, defaults to master
-# Using develop for Python 3.11+ support
-p4a.branch = develop
+# Using master for Python 3.10 compatibility (develop has issues)
+p4a.branch = master
 
 # (str) python-for-android git clone directory (if empty, it will be automatically cloned from github)
 # p4a.source_dir =
