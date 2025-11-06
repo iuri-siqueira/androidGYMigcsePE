@@ -834,8 +834,15 @@ class ReportRepository:
 
                 # Close workbook
                 workbook.close()
-                logger.info(f"Excel report created successfully: {filename}")
-                return filepath
+
+                # Verify file was actually created
+                if os.path.exists(filepath) and os.path.getsize(filepath) > 0:
+                    logger.info(f"Excel report created successfully: {filename}")
+                    return filepath
+                else:
+                    error_msg = "Error: File creation failed. Check storage permissions."
+                    logger.error(error_msg)
+                    return error_msg
 
             else:
                 # CSV export fallback (used when xlsxwriter is not available)
@@ -937,8 +944,14 @@ class ReportRepository:
                     writer.writerow(['Total Exercises in Database', len(exercises)])
                     writer.writerow(['Report Date Range', f'{AppConstants.REPORT_DAYS_RANGE} days'])
 
-                logger.info(f"CSV report created successfully: {filename}")
-                return filepath
+                # Verify file was actually created
+                if os.path.exists(filepath) and os.path.getsize(filepath) > 0:
+                    logger.info(f"CSV report created successfully: {filename}")
+                    return filepath
+                else:
+                    error_msg = "Error: CSV file creation failed. Check storage permissions."
+                    logger.error(error_msg)
+                    return error_msg
 
         except Exception as e:
             logger.error(f"Excel export failed: {e}", exc_info=True)
@@ -1000,39 +1013,46 @@ class WorkoutScreen(BoxLayout):
         scroll.add_widget(exercise_layout)
         self.add_widget(scroll)
 
-        # Control buttons - increased height for better touch targets
-        button_layout = BoxLayout(size_hint_y=None, height=90, spacing=10)
+        # Control buttons - use vertical layout to prevent cramping
+        button_container = BoxLayout(orientation='vertical', size_hint_y=None, height=200, spacing=8)
 
-        complete_btn = StyledButton(text='COMPLETE WORKOUT', font_size='18sp')
+        # Top row: Complete and Timer buttons
+        top_row = BoxLayout(size_hint_y=None, height=70, spacing=10)
+
+        complete_btn = StyledButton(text='COMPLETE\nWORKOUT', font_size='16sp')
         complete_btn.bind(on_press=self.complete_workout)
-        button_layout.add_widget(complete_btn)
+        top_row.add_widget(complete_btn)
 
         # Add REST TIMER button only for strength training sessions (not warmup)
         if not self.session_type.startswith('warmup'):
-            rest_timer_btn = StyledButton(text='⏱️ REST TIMER (75s)', font_size='18sp')
+            rest_timer_btn = StyledButton(text='⏱️ REST\nTIMER', font_size='16sp')
             rest_timer_btn.bind(on_press=self.start_session_rest_timer)
-            button_layout.add_widget(rest_timer_btn)
+            top_row.add_widget(rest_timer_btn)
 
+        button_container.add_widget(top_row)
+
+        # Bottom row: Back button
         back_btn = StyledButton(text='← GO BACK', font_size='18sp')
         back_btn.bind(on_press=self.go_back)
-        button_layout.add_widget(back_btn)
+        button_container.add_widget(back_btn)
 
-        self.add_widget(button_layout)
+        self.add_widget(button_container)
 
     def create_exercise_widget(self, exercise):
         """Create widget for individual exercise"""
         # Increased height for better touch targets
-        container = BoxLayout(orientation='horizontal', size_hint_y=None, height=110, spacing=10)
+        container = BoxLayout(orientation='horizontal', size_hint_y=None, height=100, spacing=10)
 
-        # Exercise info
-        info_layout = BoxLayout(orientation='vertical', size_hint_x=0.55, spacing=2)
+        # Exercise info - adjusted for proper spacing
+        info_layout = BoxLayout(orientation='vertical', size_hint_x=0.55, spacing=4)
 
         name_label = Label(
             text=exercise['name'],
-            font_size='20sp',  # Increased from 18sp
-            bold=True,
+            font_size='17sp',  # Reduced for better fit, removed bold
             color=(1, 1, 1, 1),
-            halign='left'
+            halign='left',
+            valign='middle',
+            size_hint_y=0.35
         )
         name_label.bind(size=name_label.setter('text_size'))
 
@@ -1048,19 +1068,22 @@ class WorkoutScreen(BoxLayout):
 
         desc_label = Label(
             text=f"{exercise['description']}",
-            font_size='15sp',  # Increased from 14sp
-            color=(0.8, 0.8, 0.8, 1),
-            halign='left'
+            font_size='13sp',  # Slightly smaller
+            color=(0.7, 0.7, 0.7, 1),
+            halign='left',
+            valign='middle',
+            size_hint_y=0.35
         )
         desc_label.bind(size=desc_label.setter('text_size'))
 
-        # Separate label for sets x reps to make it more visible
+        # Separate label for sets x reps - not bold, just colored
         reps_display = Label(
             text=reps_text,
-            font_size='16sp',  # Dedicated larger size for visibility
-            color=(0.4, 0.7, 1.0, 1),  # Blue color to stand out
-            bold=True,
-            halign='left'
+            font_size='14sp',  # Smaller, no bold
+            color=(0.5, 0.8, 1.0, 1),  # Light blue color to stand out
+            halign='left',
+            valign='middle',
+            size_hint_y=0.3
         )
         reps_display.bind(size=reps_display.setter('text_size'))
 
@@ -1076,25 +1099,25 @@ class WorkoutScreen(BoxLayout):
             complete_btn = Button(
                 text='COMPLETE',
                 background_color=(0.2, 0.7, 0.2, 1),
-                font_size='16sp'  # Increased font size
+                font_size='15sp'
             )
             complete_btn.bind(on_press=lambda x: self.log_exercise(exercise, None, exercise['reps']))
             input_layout.add_widget(complete_btn)
         else:
-            # For strength exercises: weight input + log button (removed cramped label)
+            # For strength exercises: weight input + log button
             weight_input = TextInput(
                 hint_text='Weight (kg)',
                 multiline=False,
                 size_hint_x=0.6,
                 input_filter='float',
-                font_size='18sp'  # Increased font size
+                font_size='16sp'
             )
 
             log_btn = Button(
                 text='LOG',
                 size_hint_x=0.4,
                 background_color=(0.2, 0.7, 0.2, 1),
-                font_size='16sp'  # Increased font size
+                font_size='15sp'
             )
             log_btn.bind(on_press=lambda x: self.log_exercise(exercise, weight_input.text, exercise['reps']))
 
@@ -1726,12 +1749,112 @@ Select a workout type above to begin!
         status_label.bind(size=status_label.setter('text_size'))
         main_screen.add_widget(status_label)
 
+        # Erase All Data button at bottom
+        erase_btn = Button(
+            text='🗑️ ERASE ALL DATA',
+            size_hint_y=None,
+            height=60,
+            font_size='16sp',
+            background_color=(0.8, 0.2, 0.2, 1)  # Red color
+        )
+        erase_btn.bind(on_press=self.show_erase_confirmation)
+        main_screen.add_widget(erase_btn)
+
         self.main_layout.add_widget(main_screen)
         self.main_screen_ref = main_screen
 
     def _update_main_rect(self, instance, value):
         instance.rect.pos = instance.pos
         instance.rect.size = instance.size
+
+    def show_erase_confirmation(self, instance):
+        """Show confirmation dialog for erasing workout data"""
+        content = BoxLayout(orientation='vertical', spacing=10, padding=10)
+
+        warning_label = Label(
+            text='⚠️ WARNING ⚠️\n\nThis will erase all your workout history!\n\nType "yes" or "Yes" to confirm:',
+            halign='center',
+            valign='middle',
+            size_hint_y=0.6
+        )
+        warning_label.bind(size=warning_label.setter('text_size'))
+        content.add_widget(warning_label)
+
+        confirm_input = TextInput(
+            hint_text='Type: yes',
+            multiline=False,
+            size_hint_y=None,
+            height=40,
+            font_size='18sp'
+        )
+        content.add_widget(confirm_input)
+
+        button_row = BoxLayout(size_hint_y=None, height=50, spacing=10)
+
+        cancel_btn = Button(
+            text='CANCEL',
+            background_color=(0.5, 0.5, 0.5, 1)
+        )
+        button_row.add_widget(cancel_btn)
+
+        erase_btn = Button(
+            text='ERASE',
+            background_color=(0.8, 0.2, 0.2, 1)
+        )
+        button_row.add_widget(erase_btn)
+
+        content.add_widget(button_row)
+
+        popup = Popup(
+            title='Confirm Data Erasure',
+            content=content,
+            size_hint=(0.85, 0.5),
+            auto_dismiss=False
+        )
+
+        def on_cancel(btn):
+            popup.dismiss()
+
+        def on_erase(btn):
+            if confirm_input.text in ['yes', 'Yes']:
+                # Erase workout history
+                self.erase_all_workout_data()
+                popup.dismiss()
+
+                # Show success message
+                success_popup = Popup(
+                    title='Data Erased',
+                    content=Label(text='All workout history has been erased!'),
+                    size_hint=(0.7, 0.3)
+                )
+                success_popup.open()
+
+                # Refresh main screen to show updated counts
+                self.show_main_screen()
+            else:
+                # Show error message
+                error_popup = Popup(
+                    title='Confirmation Failed',
+                    content=Label(text='You must type exactly "yes" or "Yes" to confirm'),
+                    size_hint=(0.7, 0.3)
+                )
+                error_popup.open()
+
+        cancel_btn.bind(on_press=on_cancel)
+        erase_btn.bind(on_press=on_erase)
+
+        popup.open()
+
+    def erase_all_workout_data(self):
+        """Erase all workout history (sessions and weight logs)"""
+        try:
+            # Clear sessions file
+            self.storage._save_json(self.storage.sessions_file, [])
+            # Clear weights file
+            self.storage._save_json(self.storage.weights_file, [])
+            logger.info("All workout data erased successfully")
+        except Exception as e:
+            logger.error(f"Error erasing workout data: {e}")
 
     def show_workout_screen(self, session_type):
         """Show workout screen for specific session type"""
