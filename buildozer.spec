@@ -23,7 +23,8 @@ source.main = main_android.py
 
 # (list) Application requirements
 # xlsxwriter is pure Python - no C compilation needed
-requirements = python3==3.10,kivy==2.3.0,xlsxwriter
+# Let p4a master use its default Python 3.10.x version
+requirements = python3,kivy==2.3.0,xlsxwriter
 
 # (str) Custom source dirs for requirements
 # requirements.source.kivy = ../../kivy
