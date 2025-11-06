@@ -968,8 +968,8 @@ class WorkoutScreen(BoxLayout):
     def __init__(self, session_type, app_instance, **kwargs):
         super().__init__(**kwargs)
         self.orientation = 'vertical'
-        self.padding = 20
-        self.spacing = 15
+        self.padding = 10  # Reduced from 20 for more space
+        self.spacing = 10  # Reduced from 15
         self.session_type = session_type
         self.app = app_instance
         self.completed_exercises = []
@@ -999,9 +999,9 @@ class WorkoutScreen(BoxLayout):
         )
         self.add_widget(title)
 
-        # Exercise list
+        # Exercise list - reduced spacing for full screen layout
         scroll = ScrollView()
-        exercise_layout = GridLayout(cols=1, spacing=10, size_hint_y=None)
+        exercise_layout = GridLayout(cols=1, spacing=6, size_hint_y=None, padding=(0, 0))
         exercise_layout.bind(minimum_height=exercise_layout.setter('height'))
 
         exercises = self.app.workout_repo.get_session_exercises(self.session_type)
@@ -1040,21 +1040,22 @@ class WorkoutScreen(BoxLayout):
 
     def create_exercise_widget(self, exercise):
         """Create widget for individual exercise"""
-        # Increased height for better touch targets
-        container = BoxLayout(orientation='horizontal', size_hint_y=None, height=100, spacing=10)
+        # Optimized height and spacing for full screen layout
+        container = BoxLayout(orientation='horizontal', size_hint_y=None, height=95, spacing=8)
 
-        # Exercise info - adjusted for proper spacing
-        info_layout = BoxLayout(orientation='vertical', size_hint_x=0.55, spacing=4)
+        # Exercise info - use more screen width (60% instead of 55%)
+        info_layout = BoxLayout(orientation='vertical', size_hint_x=0.6, spacing=3)
 
         name_label = Label(
             text=exercise['name'],
-            font_size='17sp',  # Reduced for better fit, removed bold
+            font_size='18sp',  # Increased for better readability
             color=(1, 1, 1, 1),
             halign='left',
-            valign='middle',
-            size_hint_y=0.35
+            valign='top',
+            size_hint_y=0.4,
+            text_size=(None, None)  # Let text size naturally
         )
-        name_label.bind(size=name_label.setter('text_size'))
+        name_label.bind(width=lambda *x: setattr(name_label, 'text_size', (name_label.width, None)))
 
         # Show sets x reps format matching Excel sheet
         is_warmup = exercise['category'].startswith('Warmup')
@@ -1068,56 +1069,58 @@ class WorkoutScreen(BoxLayout):
 
         desc_label = Label(
             text=f"{exercise['description']}",
-            font_size='13sp',  # Slightly smaller
+            font_size='13sp',
             color=(0.7, 0.7, 0.7, 1),
             halign='left',
-            valign='middle',
-            size_hint_y=0.35
+            valign='top',
+            size_hint_y=0.35,
+            text_size=(None, None)
         )
-        desc_label.bind(size=desc_label.setter('text_size'))
+        desc_label.bind(width=lambda *x: setattr(desc_label, 'text_size', (desc_label.width, None)))
 
-        # Separate label for sets x reps - not bold, just colored
+        # Separate label for sets x reps - clear and visible
         reps_display = Label(
             text=reps_text,
-            font_size='14sp',  # Smaller, no bold
+            font_size='15sp',  # Increased for visibility
             color=(0.5, 0.8, 1.0, 1),  # Light blue color to stand out
             halign='left',
-            valign='middle',
-            size_hint_y=0.3
+            valign='top',
+            size_hint_y=0.25,
+            text_size=(None, None)
         )
-        reps_display.bind(size=reps_display.setter('text_size'))
+        reps_display.bind(width=lambda *x: setattr(reps_display, 'text_size', (reps_display.width, None)))
 
         info_layout.add_widget(name_label)
         info_layout.add_widget(desc_label)
         info_layout.add_widget(reps_display)
 
-        # Input layout - different for warmup vs strength exercises
-        input_layout = BoxLayout(orientation='horizontal', size_hint_x=0.45, spacing=5)
+        # Input layout - use remaining 40% efficiently
+        input_layout = BoxLayout(orientation='horizontal', size_hint_x=0.4, spacing=5)
 
         if is_warmup:
             # For warmup: only show completion button (no weight/reps input)
             complete_btn = Button(
                 text='COMPLETE',
                 background_color=(0.2, 0.7, 0.2, 1),
-                font_size='15sp'
+                font_size='14sp'
             )
             complete_btn.bind(on_press=lambda x: self.log_exercise(exercise, None, exercise['reps']))
             input_layout.add_widget(complete_btn)
         else:
             # For strength exercises: weight input + log button
             weight_input = TextInput(
-                hint_text='Weight (kg)',
+                hint_text='Weight',
                 multiline=False,
-                size_hint_x=0.6,
+                size_hint_x=0.55,
                 input_filter='float',
-                font_size='16sp'
+                font_size='15sp'
             )
 
             log_btn = Button(
                 text='LOG',
-                size_hint_x=0.4,
+                size_hint_x=0.45,
                 background_color=(0.2, 0.7, 0.2, 1),
-                font_size='15sp'
+                font_size='14sp'
             )
             log_btn.bind(on_press=lambda x: self.log_exercise(exercise, weight_input.text, exercise['reps']))
 
