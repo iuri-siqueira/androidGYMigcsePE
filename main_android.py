@@ -1016,23 +1016,23 @@ class WorkoutScreen(BoxLayout):
         # Control buttons - use vertical layout to prevent cramping
         button_container = BoxLayout(orientation='vertical', size_hint_y=None, height=200, spacing=8)
 
-        # Top row: Complete and Timer buttons
-        top_row = BoxLayout(size_hint_y=None, height=70, spacing=10)
+        # Top row: Complete and Timer buttons - thicker for single line text
+        top_row = BoxLayout(size_hint_y=None, height=85, spacing=10)
 
-        complete_btn = StyledButton(text='COMPLETE\nWORKOUT', font_size='13sp')
+        complete_btn = StyledButton(text='COMPLETE WORKOUT', font_size='14sp')
         complete_btn.bind(on_press=self.complete_workout)
         top_row.add_widget(complete_btn)
 
         # Add REST TIMER button only for strength training sessions (not warmup)
         if not self.session_type.startswith('warmup'):
-            rest_timer_btn = StyledButton(text='⏱️ REST\nTIMER', font_size='13sp')
+            rest_timer_btn = StyledButton(text='⏱️ REST TIMER (75s)', font_size='14sp')
             rest_timer_btn.bind(on_press=self.start_session_rest_timer)
             top_row.add_widget(rest_timer_btn)
 
         button_container.add_widget(top_row)
 
-        # Bottom row: Back button
-        back_btn = StyledButton(text='← GO BACK', font_size='16sp')
+        # Bottom row: Back button - also thicker
+        back_btn = StyledButton(text='← GO BACK', font_size='16sp', size_hint_y=None, height=85)
         back_btn.bind(on_press=self.go_back)
         button_container.add_widget(back_btn)
 
@@ -1465,34 +1465,88 @@ SESSIONS COMPLETED:
     def download_excel_report(self, instance):
         """Download workout report file"""
         try:
-            # Check and request storage permissions first - CRITICAL
+            # Check and request storage permissions first - CRITICAL for Xiaomi/HyperOS
             if platform == 'android':
                 if not PermissionsManager.check_storage_permissions():
                     logger.warning("Storage permissions not granted, requesting now...")
 
-                    # Request permissions with explicit popup
-                    PermissionsManager.request_storage_permissions()
+                    # Request permissions - this should trigger OS dialog
+                    from android.permissions import request_permissions, Permission
+                    request_permissions([
+                        Permission.WRITE_EXTERNAL_STORAGE,
+                        Permission.READ_EXTERNAL_STORAGE,
+                    ])
 
-                    # Show instructions to user
-                    popup = Popup(
-                        title='⚠️ Permissions Required',
-                        content=Label(
-                            text='IMPORTANT: Android will ask for storage permissions.\n\n'
-                                 'Please ALLOW to download Excel reports.\n\n'
-                                 'After allowing, tap "DOWNLOAD EXCEL" again.',
-                            halign='center'
-                        ),
-                        size_hint=(0.85, 0.45)
+                    # Show instructions to user with manual settings link
+                    from kivy.uix.boxlayout import BoxLayout
+                    from kivy.uix.button import Button
+
+                    content = BoxLayout(orientation='vertical', spacing=10, padding=10)
+
+                    msg_label = Label(
+                        text='⚠️ STORAGE PERMISSION NEEDED\n\n'
+                             'This app needs permission to save Excel files.\n\n'
+                             'For Xiaomi/HyperOS:\n'
+                             '1. Android should ask for permission now\n'
+                             '2. If not, tap "Open Settings" below\n'
+                             '3. Enable Storage permissions manually\n'
+                             '4. Come back and tap DOWNLOAD again',
+                        halign='center',
+                        valign='middle'
                     )
+                    msg_label.bind(size=msg_label.setter('text_size'))
+                    content.add_widget(msg_label)
+
+                    btn_layout = BoxLayout(size_hint_y=None, height=50, spacing=10)
+
+                    settings_btn = Button(
+                        text='Open Settings',
+                        background_color=(0.2, 0.6, 1, 1)
+                    )
+
+                    cancel_btn = Button(
+                        text='Cancel',
+                        background_color=(0.5, 0.5, 0.5, 1)
+                    )
+
+                    btn_layout.add_widget(settings_btn)
+                    btn_layout.add_widget(cancel_btn)
+                    content.add_widget(btn_layout)
+
+                    popup = Popup(
+                        title='Permission Required',
+                        content=content,
+                        size_hint=(0.9, 0.6),
+                        auto_dismiss=False
+                    )
+
+                    def open_settings(btn):
+                        try:
+                            from jnius import autoclass
+                            Intent = autoclass('android.content.Intent')
+                            Settings = autoclass('android.provider.Settings')
+                            PythonActivity = autoclass('org.kivy.android.PythonActivity')
+
+                            intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS)
+                            from android.config import ACTIVITY_CLASS_NAME
+                            intent.setData(autoclass('android.net.Uri').parse('package:' + ACTIVITY_CLASS_NAME.split('.')[0] + '.' + ACTIVITY_CLASS_NAME.split('.')[1]))
+                            PythonActivity.mActivity.startActivity(intent)
+                            popup.dismiss()
+                        except Exception as e:
+                            logger.error(f"Failed to open settings: {e}")
+
+                    settings_btn.bind(on_press=open_settings)
+                    cancel_btn.bind(on_press=lambda x: popup.dismiss())
+
                     popup.open()
                     return  # Don't continue until permissions granted
 
                 # Double-check permissions were actually granted
                 if not PermissionsManager.check_storage_permissions():
                     popup = Popup(
-                        title='Permission Denied',
-                        content=Label(text='Cannot download without storage permissions.\n\nPlease enable in Android Settings.'),
-                        size_hint=(0.8, 0.4)
+                        title='Permission Still Denied',
+                        content=Label(text='Storage permission is required to download reports.\n\nPlease enable it in Android Settings:\nSettings → Apps → IGCSE GYM → Permissions → Storage'),
+                        size_hint=(0.85, 0.5)
                     )
                     popup.open()
                     return
