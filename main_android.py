@@ -83,8 +83,8 @@ class PermissionsManager:
     """Manages Android runtime permissions"""
 
     @staticmethod
-    def request_storage_permissions():
-        """Request storage permissions on Android"""
+    def request_storage_permissions(callback=None):
+        """Request storage permissions on Android with visible dialog"""
         if platform == 'android':
             logger.info("Requesting Android storage permissions")
             permissions = [
@@ -100,8 +100,29 @@ class PermissionsManager:
 
             request_permissions(permissions)
             logger.info("Storage permissions requested")
+
+            # Show confirmation dialog
+            from kivy.uix.popup import Popup
+            from kivy.uix.label import Label
+            content = Label(
+                text='Storage permissions requested!\n\nThis app needs storage access to:\n• Save workout data\n• Export Excel reports\n\nPlease allow permissions when prompted.',
+                halign='center',
+                valign='center'
+            )
+            content.bind(size=content.setter('text_size'))
+            popup = Popup(
+                title='Permissions Required',
+                content=content,
+                size_hint=(0.8, 0.4),
+                auto_dismiss=True
+            )
+            if callback:
+                popup.bind(on_dismiss=callback)
+            popup.open()
         else:
             logger.info("Not on Android - skipping permission request")
+            if callback:
+                callback()
 
     @staticmethod
     def check_storage_permissions():
@@ -215,6 +236,7 @@ from kivy.uix.gridlayout import GridLayout
 from kivy.graphics import Color, Rectangle, Line, RoundedRectangle
 from kivy.clock import Clock
 from kivy.animation import Animation
+from kivy.core.window import Window
 
 class DataStorage:
     """Lightweight data storage using JSON files - preserves ALL functionality"""
@@ -978,20 +1000,20 @@ class WorkoutScreen(BoxLayout):
         scroll.add_widget(exercise_layout)
         self.add_widget(scroll)
 
-        # Control buttons
-        button_layout = BoxLayout(size_hint_y=None, height=60, spacing=10)
+        # Control buttons - increased height for better touch targets
+        button_layout = BoxLayout(size_hint_y=None, height=90, spacing=10)
 
-        complete_btn = StyledButton(text='COMPLETE WORKOUT')
+        complete_btn = StyledButton(text='COMPLETE WORKOUT', font_size='18sp')
         complete_btn.bind(on_press=self.complete_workout)
         button_layout.add_widget(complete_btn)
 
         # Add REST TIMER button only for strength training sessions (not warmup)
         if not self.session_type.startswith('warmup'):
-            rest_timer_btn = StyledButton(text='⏱️ REST TIMER (75s)')
+            rest_timer_btn = StyledButton(text='⏱️ REST TIMER (75s)', font_size='18sp')
             rest_timer_btn.bind(on_press=self.start_session_rest_timer)
             button_layout.add_widget(rest_timer_btn)
 
-        back_btn = StyledButton(text='← GO BACK')
+        back_btn = StyledButton(text='← GO BACK', font_size='18sp')
         back_btn.bind(on_press=self.go_back)
         button_layout.add_widget(back_btn)
 
@@ -999,14 +1021,15 @@ class WorkoutScreen(BoxLayout):
 
     def create_exercise_widget(self, exercise):
         """Create widget for individual exercise"""
-        container = BoxLayout(orientation='horizontal', size_hint_y=None, height=80, spacing=10)
+        # Increased height for better touch targets
+        container = BoxLayout(orientation='horizontal', size_hint_y=None, height=110, spacing=10)
 
         # Exercise info
-        info_layout = BoxLayout(orientation='vertical', size_hint_x=0.6)
+        info_layout = BoxLayout(orientation='vertical', size_hint_x=0.55, spacing=2)
 
         name_label = Label(
             text=exercise['name'],
-            font_size='18sp',
+            font_size='20sp',  # Increased from 18sp
             bold=True,
             color=(1, 1, 1, 1),
             halign='left'
@@ -1024,55 +1047,58 @@ class WorkoutScreen(BoxLayout):
             reps_text = f"{sets}x{reps} {unit}"
 
         desc_label = Label(
-            text=f"{exercise['description']} - {reps_text}",
-            font_size='14sp',
+            text=f"{exercise['description']}",
+            font_size='15sp',  # Increased from 14sp
             color=(0.8, 0.8, 0.8, 1),
             halign='left'
         )
         desc_label.bind(size=desc_label.setter('text_size'))
 
+        # Separate label for sets x reps to make it more visible
+        reps_display = Label(
+            text=reps_text,
+            font_size='16sp',  # Dedicated larger size for visibility
+            color=(0.4, 0.7, 1.0, 1),  # Blue color to stand out
+            bold=True,
+            halign='left'
+        )
+        reps_display.bind(size=reps_display.setter('text_size'))
+
         info_layout.add_widget(name_label)
         info_layout.add_widget(desc_label)
+        info_layout.add_widget(reps_display)
 
         # Input layout - different for warmup vs strength exercises
-        input_layout = BoxLayout(orientation='horizontal', size_hint_x=0.4, spacing=5)
+        input_layout = BoxLayout(orientation='horizontal', size_hint_x=0.45, spacing=5)
 
         if is_warmup:
             # For warmup: only show completion button (no weight/reps input)
             complete_btn = Button(
                 text='COMPLETE',
-                background_color=(0.2, 0.7, 0.2, 1)
+                background_color=(0.2, 0.7, 0.2, 1),
+                font_size='16sp'  # Increased font size
             )
             complete_btn.bind(on_press=lambda x: self.log_exercise(exercise, None, exercise['reps']))
             input_layout.add_widget(complete_btn)
         else:
-            # For strength exercises: weight input + fixed reps display + log button
+            # For strength exercises: weight input + log button (removed cramped label)
             weight_input = TextInput(
-                hint_text='Weight',
+                hint_text='Weight (kg)',
                 multiline=False,
-                size_hint_x=0.5,
-                input_filter='float'
-            )
-
-            sets = exercise.get('sets', 3)
-            reps = exercise['reps']
-            unit = exercise.get('unit', 'reps')
-            reps_label = Label(
-                text=f"{sets}x{reps} {unit}",
-                font_size='14sp',
-                color=(1, 1, 1, 1),
-                size_hint_x=0.3
+                size_hint_x=0.6,
+                input_filter='float',
+                font_size='18sp'  # Increased font size
             )
 
             log_btn = Button(
                 text='LOG',
-                size_hint_x=0.25,
-                background_color=(0.2, 0.7, 0.2, 1)
+                size_hint_x=0.4,
+                background_color=(0.2, 0.7, 0.2, 1),
+                font_size='16sp'  # Increased font size
             )
             log_btn.bind(on_press=lambda x: self.log_exercise(exercise, weight_input.text, exercise['reps']))
 
             input_layout.add_widget(weight_input)
-            input_layout.add_widget(reps_label)
             input_layout.add_widget(log_btn)
 
         container.add_widget(info_layout)
@@ -1114,6 +1140,10 @@ class WorkoutScreen(BoxLayout):
                     'weight': 0,  # No weight for warmup
                     'reps': reps_val
                 })
+
+                # Log to console for debugging
+                logger.info(f"Logged warmup exercise: {exercise['name']}, reps: {reps_val}")
+                logger.info(f"Total exercises logged in session: {len(self.completed_exercises)}")
 
                 # Show confirmation
                 unit = exercise.get('unit', 'reps')
@@ -1182,6 +1212,10 @@ class WorkoutScreen(BoxLayout):
                     'reps': reps_val
                 })
 
+                # Log to console for debugging
+                logger.info(f"Logged strength exercise: {exercise['name']}, weight: {weight_val}kg, reps: {reps_val}")
+                logger.info(f"Total exercises logged in session: {len(self.completed_exercises)}")
+
                 # Show confirmation
                 popup = Popup(
                     title='Exercise Logged',
@@ -1230,14 +1264,32 @@ class WorkoutScreen(BoxLayout):
     def complete_workout(self, instance):
         """Complete the workout session"""
         if self.completed_exercises:
-            self.app.workout_repo.log_workout(self.session_type, self.completed_exercises)
+            logger.info(f"Completing workout session: {self.session_type}")
+            logger.info(f"Total exercises to save: {len(self.completed_exercises)}")
+
+            # Log workout
+            success = self.app.workout_repo.log_workout(self.session_type, self.completed_exercises)
+
+            if success:
+                logger.info("Workout saved successfully!")
+            else:
+                logger.error("Failed to save workout!")
 
             popup = Popup(
                 title='Workout Complete!',
-                content=Label(text=f'Logged {len(self.completed_exercises)} exercises'),
-                size_hint=(0.6, 0.4)
+                content=Label(text=f'Saved {len(self.completed_exercises)} exercises to {self.session_type}'),
+                size_hint=(0.7, 0.4)
             )
             popup.open()
+        else:
+            logger.warning("No exercises logged in this session")
+            popup = Popup(
+                title='No Exercises Logged',
+                content=Label(text='Please log at least one exercise before completing the workout'),
+                size_hint=(0.7, 0.4)
+            )
+            popup.open()
+            return
 
         self.go_back(instance)
 
@@ -1538,6 +1590,13 @@ class IGCSEGymApp(App):
         self.workout_repo = WorkoutRepository(self.storage)
         self.report_repo = ReportRepository(self.storage)
 
+        # Screen navigation history for back button
+        self.screen_history = []
+
+        # Bind Android back button handler
+        if platform == 'android':
+            Window.bind(on_keyboard=self.on_android_back_button)
+
         # Create main layout
         self.main_layout = BoxLayout()
         self.show_main_screen()
@@ -1545,8 +1604,45 @@ class IGCSEGymApp(App):
         logger.info("IGCSE GYM Application initialized successfully")
         return self.main_layout
 
+    def on_android_back_button(self, window, key, *args):
+        """Handle Android back button with smooth slide animation"""
+        if key == 27:  # Back button key code
+            if self.screen_history:
+                # Animate back to previous screen
+                current_screen = self.main_layout.children[0]
+
+                # Slide out animation
+                anim = Animation(x=Window.width, duration=0.3, t='in_out_quad')
+                anim.bind(on_complete=lambda *x: self._navigate_back())
+                anim.start(current_screen)
+
+                return True  # Consume the event
+            else:
+                # On main screen, allow default behavior (exit app)
+                return False
+        return False
+
+    def _navigate_back(self):
+        """Navigate to previous screen after animation completes"""
+        if self.screen_history:
+            previous_screen = self.screen_history.pop()
+            self.main_layout.clear_widgets()
+
+            # Add previous screen with slide in animation from left
+            previous_screen.x = -Window.width
+            self.main_layout.add_widget(previous_screen)
+
+            # Slide in animation
+            anim = Animation(x=0, duration=0.3, t='in_out_quad')
+            anim.start(previous_screen)
+        else:
+            self.show_main_screen()
+
     def show_main_screen(self):
         """Display main menu screen"""
+        # Clear history when returning to main screen
+        self.screen_history = []
+
         self.main_layout.clear_widgets()
 
         main_screen = BoxLayout(orientation='vertical', padding=20, spacing=15)
@@ -1568,11 +1664,12 @@ class IGCSEGymApp(App):
         )
         main_screen.add_widget(title)
 
-        # Warm-up button - leads to warmup menu
+        # Warm-up button - leads to warmup menu (increased size for better touch)
         warmup_btn = StyledButton(
             text='WARM-UP ROUTINES',
             size_hint_y=None,
-            height=70
+            height=90,
+            font_size='20sp'
         )
         warmup_btn.bind(on_press=lambda x: self.show_warmup_menu())
         main_screen.add_widget(warmup_btn)
@@ -1581,7 +1678,8 @@ class IGCSEGymApp(App):
         session1_btn = StyledButton(
             text='WORKOUT SESSION 1',
             size_hint_y=None,
-            height=70
+            height=90,
+            font_size='20sp'
         )
         session1_btn.bind(on_press=lambda x: self.show_workout_screen('session1'))
         main_screen.add_widget(session1_btn)
@@ -1590,7 +1688,8 @@ class IGCSEGymApp(App):
         session2_btn = StyledButton(
             text='WORKOUT SESSION 2',
             size_hint_y=None,
-            height=70
+            height=90,
+            font_size='20sp'
         )
         session2_btn.bind(on_press=lambda x: self.show_workout_screen('session2'))
         main_screen.add_widget(session2_btn)
@@ -1599,7 +1698,8 @@ class IGCSEGymApp(App):
         reports_btn = StyledButton(
             text='VIEW REPORTS',
             size_hint_y=None,
-            height=70
+            height=90,
+            font_size='20sp'
         )
         reports_btn.bind(on_press=lambda x: self.show_reports_screen())
         main_screen.add_widget(reports_btn)
@@ -1635,18 +1735,30 @@ Select a workout type above to begin!
 
     def show_workout_screen(self, session_type):
         """Show workout screen for specific session type"""
+        # Save current screen to history for back navigation
+        if self.main_layout.children:
+            self.screen_history.append(self.main_layout.children[0])
+
         self.main_layout.clear_widgets()
         workout_screen = WorkoutScreen(session_type, self)
         self.main_layout.add_widget(workout_screen)
 
     def show_reports_screen(self):
         """Show reports and analytics screen"""
+        # Save current screen to history for back navigation
+        if self.main_layout.children:
+            self.screen_history.append(self.main_layout.children[0])
+
         self.main_layout.clear_widgets()
         reports_screen = ReportsScreen(self)
         self.main_layout.add_widget(reports_screen)
 
     def show_warmup_menu(self):
         """Show warmup selection menu with three tabs"""
+        # Save current screen to history for back navigation
+        if self.main_layout.children:
+            self.screen_history.append(self.main_layout.children[0])
+
         self.main_layout.clear_widgets()
         warmup_menu = WarmupMenuScreen(self)
         self.main_layout.add_widget(warmup_menu)
