@@ -42,9 +42,9 @@ orientation = portrait
 fullscreen = 0
 
 # (list) Permissions
-# Storage permissions for saving workout reports
-# For Android 11+ (API 30+), we also need MANAGE_EXTERNAL_STORAGE for full access
-android.permissions = WRITE_EXTERNAL_STORAGE,READ_EXTERNAL_STORAGE,INTERNET,MANAGE_EXTERNAL_STORAGE
+# Android 15 / Xiaomi HyperOS compatible permissions
+# Modern approach: READ_MEDIA_* for Android 13+, legacy for older versions
+android.permissions = WRITE_EXTERNAL_STORAGE,READ_EXTERNAL_STORAGE,INTERNET,MANAGE_EXTERNAL_STORAGE,READ_MEDIA_IMAGES,READ_MEDIA_VIDEO,READ_MEDIA_AUDIO
 
 # (int) Target Android API, should be as high as possible.
 android.api = 33

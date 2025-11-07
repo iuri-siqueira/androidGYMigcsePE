@@ -683,17 +683,19 @@ class ReportRepository:
             weights = self.storage._load_json(self.storage.weights_file)
             exercises = self.storage.get_exercises()
 
-            # Create Downloads directory
+            # Create Reports PE folder inside Downloads
             downloads_dir = self._get_downloads_directory()
-            os.makedirs(downloads_dir, exist_ok=True)
+            reports_folder = os.path.join(downloads_dir, "Reports PE")
+            os.makedirs(reports_folder, exist_ok=True)
 
-            # Generate filename with timestamp
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            # Generate filename with month/day format: Report_MM-DD.xlsx
+            now = datetime.now()
+            filename_date = now.strftime("%m-%d")  # Example: 11-06
 
             if XLSX_AVAILABLE:
                 # Create Excel file with xlsxwriter (pure Python, works on Android)
-                filename = f"IGCSE_GYM_Report_{timestamp}.xlsx"
-                filepath = os.path.join(downloads_dir, filename)
+                filename = f"Report_{filename_date}.xlsx"
+                filepath = os.path.join(reports_folder, filename)
                 logger.info(f"Creating Excel report with xlsxwriter: {filepath}")
 
                 # Create workbook
@@ -846,8 +848,8 @@ class ReportRepository:
 
             else:
                 # CSV export fallback (used when xlsxwriter is not available)
-                filename = f"IGCSE_GYM_Report_{timestamp}.csv"
-                filepath = os.path.join(downloads_dir, filename)
+                filename = f"Report_{filename_date}.csv"
+                filepath = os.path.join(reports_folder, filename)
                 logger.info(f"Creating CSV report (xlsxwriter not available): {filepath}")
 
                 with open(filepath, 'w', newline='', encoding='utf-8') as csvfile:
@@ -1470,12 +1472,23 @@ SESSIONS COMPLETED:
                 if not PermissionsManager.check_storage_permissions():
                     logger.warning("Storage permissions not granted, requesting now...")
 
-                    # Request permissions - this should trigger OS dialog
+                    # Request permissions - Android 15 compatible approach
                     from android.permissions import request_permissions, Permission
-                    request_permissions([
-                        Permission.WRITE_EXTERNAL_STORAGE,
-                        Permission.READ_EXTERNAL_STORAGE,
-                    ])
+                    from android import api_version
+
+                    # Android 13+ (API 33+) uses new media permissions
+                    if api_version >= 33:
+                        request_permissions([
+                            Permission.READ_MEDIA_IMAGES,
+                            Permission.READ_MEDIA_VIDEO,
+                            Permission.READ_MEDIA_AUDIO,
+                        ])
+                    else:
+                        # Legacy permissions for older Android versions
+                        request_permissions([
+                            Permission.WRITE_EXTERNAL_STORAGE,
+                            Permission.READ_EXTERNAL_STORAGE,
+                        ])
 
                     # Show instructions to user with manual settings link
                     from kivy.uix.boxlayout import BoxLayout
