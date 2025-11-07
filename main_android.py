@@ -126,17 +126,49 @@ class PermissionsManager:
 
     @staticmethod
     def check_storage_permissions():
-        """Check if storage permissions are granted"""
+        """Check if storage permissions are granted - Android 13+ compatible"""
         if platform == 'android':
-            write_perm = check_permission(Permission.WRITE_EXTERNAL_STORAGE)
-            read_perm = check_permission(Permission.READ_EXTERNAL_STORAGE)
+            try:
+                from android import api_version
+                from android.permissions import check_permission, Permission
 
-            if not (write_perm and read_perm):
-                logger.warning("Storage permissions not granted")
-                return False
+                # Android 13+ (API 33+) uses new media permissions
+                if api_version >= 33:
+                    # Check for new READ_MEDIA_* permissions
+                    try:
+                        media_images = check_permission(Permission.READ_MEDIA_IMAGES)
+                        media_video = check_permission(Permission.READ_MEDIA_VIDEO)
+                        media_audio = check_permission(Permission.READ_MEDIA_AUDIO)
 
-            logger.info("Storage permissions granted")
-            return True
+                        # At least one media permission should be granted
+                        has_media_perms = media_images or media_video or media_audio
+
+                        if has_media_perms:
+                            logger.info("Media permissions granted (Android 13+)")
+                            return True
+                        else:
+                            logger.warning("Media permissions not granted (Android 13+)")
+                            return False
+                    except AttributeError:
+                        # Fallback if READ_MEDIA_* permissions not available
+                        logger.warning("READ_MEDIA_* permissions not available, checking legacy")
+                        pass
+
+                # Legacy permissions for Android < 13
+                write_perm = check_permission(Permission.WRITE_EXTERNAL_STORAGE)
+                read_perm = check_permission(Permission.READ_EXTERNAL_STORAGE)
+
+                if write_perm and read_perm:
+                    logger.info("Storage permissions granted (Legacy)")
+                    return True
+                else:
+                    logger.warning("Storage permissions not granted (Legacy)")
+                    return False
+
+            except Exception as e:
+                logger.error(f"Error checking permissions: {e}")
+                # Assume we have permissions if we can't check
+                return True
         else:
             # Non-Android platforms don't need permission checks
             return True
@@ -1490,36 +1522,68 @@ SESSIONS COMPLETED:
                             Permission.READ_EXTERNAL_STORAGE,
                         ])
 
-                    # Show instructions to user with manual settings link
+                    # Show beautiful permission dialog
                     from kivy.uix.boxlayout import BoxLayout
                     from kivy.uix.button import Button
 
-                    content = BoxLayout(orientation='vertical', spacing=10, padding=10)
+                    content = BoxLayout(orientation='vertical', spacing=15, padding=20)
 
+                    # Add background
+                    with content.canvas.before:
+                        Color(0.15, 0.15, 0.15, 1)
+                        content.rect = Rectangle(size=content.size, pos=content.pos)
+                    content.bind(size=lambda *x: setattr(content.rect, 'size', content.size))
+                    content.bind(pos=lambda *x: setattr(content.rect, 'pos', content.pos))
+
+                    # Icon label
+                    icon_label = Label(
+                        text='📁',
+                        font_size='48sp',
+                        size_hint_y=None,
+                        height=60
+                    )
+                    content.add_widget(icon_label)
+
+                    # Title
+                    title_label = Label(
+                        text='Storage Permission Needed',
+                        font_size='20sp',
+                        bold=True,
+                        color=(1, 1, 1, 1),
+                        size_hint_y=None,
+                        height=30
+                    )
+                    content.add_widget(title_label)
+
+                    # Message
                     msg_label = Label(
-                        text='⚠️ STORAGE PERMISSION NEEDED\n\n'
-                             'This app needs permission to save Excel files.\n\n'
-                             'For Xiaomi/HyperOS:\n'
-                             '1. Android should ask for permission now\n'
-                             '2. If not, tap "Open Settings" below\n'
-                             '3. Enable Storage permissions manually\n'
-                             '4. Come back and tap DOWNLOAD again',
+                        text='To download Excel reports,\nthis app needs storage access.\n\n'
+                             'Android will ask for permission.\nPlease tap ALLOW.\n\n'
+                             'Xiaomi/HyperOS users:\nIf no dialog appears, use Settings button.',
+                        font_size='15sp',
+                        color=(0.9, 0.9, 0.9, 1),
                         halign='center',
-                        valign='middle'
+                        valign='middle',
+                        size_hint_y=0.5
                     )
                     msg_label.bind(size=msg_label.setter('text_size'))
                     content.add_widget(msg_label)
 
-                    btn_layout = BoxLayout(size_hint_y=None, height=50, spacing=10)
+                    # Button layout with better styling
+                    btn_layout = BoxLayout(size_hint_y=None, height=60, spacing=12)
 
                     settings_btn = Button(
-                        text='Open Settings',
-                        background_color=(0.2, 0.6, 1, 1)
+                        text='⚙️ Open Settings',
+                        font_size='15sp',
+                        background_color=(0.275, 0.545, 0.859, 1),  # Nice blue
+                        background_normal=''
                     )
 
                     cancel_btn = Button(
                         text='Cancel',
-                        background_color=(0.5, 0.5, 0.5, 1)
+                        font_size='15sp',
+                        background_color=(0.6, 0.6, 0.6, 1),
+                        background_normal=''
                     )
 
                     btn_layout.add_widget(settings_btn)
@@ -1527,10 +1591,12 @@ SESSIONS COMPLETED:
                     content.add_widget(btn_layout)
 
                     popup = Popup(
-                        title='Permission Required',
+                        title='',
+                        title_size='0sp',  # Hide default title
                         content=content,
-                        size_hint=(0.9, 0.6),
-                        auto_dismiss=False
+                        size_hint=(0.88, 0.65),
+                        auto_dismiss=False,
+                        separator_color=(0, 0, 0, 0)  # Hide separator
                     )
 
                     def open_settings(btn):

@@ -16,7 +16,7 @@ source.dir = .
 source.include_exts = py,png,jpg,kv,atlas,json,txt
 
 # (str) Application versioning (method 1)
-version = 1.1
+version = 1.2
 
 # (str) Application main entry point
 source.main = main_android.py
