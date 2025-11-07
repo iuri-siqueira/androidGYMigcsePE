@@ -1559,7 +1559,7 @@ SESSIONS COMPLETED:
                     msg_label = Label(
                         text='To download Excel reports,\nthis app needs storage access.\n\n'
                              'Android will ask for permission.\nPlease tap ALLOW.\n\n'
-                             'Xiaomi/HyperOS users:\nIf no dialog appears, use Settings button.',
+                             'After allowing, tap RETRY to download.',
                         font_size='15sp',
                         color=(0.9, 0.9, 0.9, 1),
                         halign='center',
@@ -1572,8 +1572,8 @@ SESSIONS COMPLETED:
                     # Button layout with better styling
                     btn_layout = BoxLayout(size_hint_y=None, height=60, spacing=12)
 
-                    settings_btn = Button(
-                        text='⚙️ Open Settings',
+                    retry_btn = Button(
+                        text='🔄 Retry',
                         font_size='15sp',
                         background_color=(0.275, 0.545, 0.859, 1),  # Nice blue
                         background_normal=''
@@ -1586,7 +1586,7 @@ SESSIONS COMPLETED:
                         background_normal=''
                     )
 
-                    btn_layout.add_widget(settings_btn)
+                    btn_layout.add_widget(retry_btn)
                     btn_layout.add_widget(cancel_btn)
                     content.add_widget(btn_layout)
 
@@ -1599,22 +1599,11 @@ SESSIONS COMPLETED:
                         separator_color=(0, 0, 0, 0)  # Hide separator
                     )
 
-                    def open_settings(btn):
-                        try:
-                            from jnius import autoclass
-                            Intent = autoclass('android.content.Intent')
-                            Settings = autoclass('android.provider.Settings')
-                            PythonActivity = autoclass('org.kivy.android.PythonActivity')
+                    def on_retry(btn):
+                        popup.dismiss()
+                        # User will tap DOWNLOAD EXCEL again to retry
 
-                            intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS)
-                            from android.config import ACTIVITY_CLASS_NAME
-                            intent.setData(autoclass('android.net.Uri').parse('package:' + ACTIVITY_CLASS_NAME.split('.')[0] + '.' + ACTIVITY_CLASS_NAME.split('.')[1]))
-                            PythonActivity.mActivity.startActivity(intent)
-                            popup.dismiss()
-                        except Exception as e:
-                            logger.error(f"Failed to open settings: {e}")
-
-                    settings_btn.bind(on_press=open_settings)
+                    retry_btn.bind(on_press=on_retry)
                     cancel_btn.bind(on_press=lambda x: popup.dismiss())
 
                     popup.open()
