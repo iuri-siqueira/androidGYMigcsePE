@@ -138,8 +138,9 @@ android.meta_data = com.google.android.gms.version=12451000
 # p4a.fork = kivy
 
 # (str) python-for-android branch to use, defaults to master
-# Using develop branch for Python 3.11+ compatibility and latest fixes
-p4a.branch = develop
+# Using master branch for stability (Python 3.11)
+# p4a.branch = develop
+p4a.branch = master
 
 # (str) python-for-android git clone directory (if empty, it will be automatically cloned from github)
 # p4a.source_dir =
