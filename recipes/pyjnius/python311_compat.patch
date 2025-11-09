@@ -1,0 +1,11 @@
+--- a/jnius/jnius_utils.pxi
++++ b/jnius/jnius_utils.pxi
+@@ -320,7 +320,7 @@ cdef void release_args(JNIEnv *j_env, tuple definition, jobjectArray args, ret
+         # int signature must be 'I', so no array is accepted. Same for long.
+         if r == 'S' or r == 'I':
+             if isinstance(arg, int) or (
+-                    (isinstance(arg, long) and arg < 2147483648)):
++                    (isinstance(arg, int) and arg < 2147483648)):
+                 j_args.append(arg)
+                 continue
+         if r == 'J':
