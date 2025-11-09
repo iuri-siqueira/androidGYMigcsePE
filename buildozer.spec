@@ -10,13 +10,6 @@ source.main = main_android.py
 # Pure Python dependencies only - no C compilation needed
 requirements = python3,kivy,xlsxwriter
 
-# Custom recipes for Python 3.11 compatibility
-p4a.local_recipes = ./recipes
-
-# Setup.local file to exclude Android-incompatible modules
-p4a.setup_py = False
-p4a.hook =
-
 # Assets
 presplash.filename = %(source.dir)s/assets/presplash.png
 icon.filename = %(source.dir)s/assets/icon.png
@@ -34,8 +27,8 @@ android.ndk = 25b
 android.archs = arm64-v8a
 android.accept_sdk_license = True
 
-# Build settings - use develop branch for Python 3.11 compatibility
-p4a.branch = develop
+# Build settings
+p4a.branch = master
 p4a.bootstrap = sdl2
 
 [buildozer]
