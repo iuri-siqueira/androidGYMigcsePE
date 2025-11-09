@@ -237,7 +237,14 @@ class DataStorage:
             'exercises': exercises_completed
         }
         sessions.append(session)
-        return self._save_json(self.sessions_file, sessions)
+        logger.info(f"Saving workout session: {session_name} with {len(exercises_completed)} exercises")
+        logger.debug(f"Session data: {session}")
+        result = self._save_json(self.sessions_file, sessions)
+        if result:
+            logger.info(f"Successfully saved session to {self.sessions_file}")
+        else:
+            logger.error(f"Failed to save session to {self.sessions_file}")
+        return result
 
     def save_weight_log(self, exercise_id: int, weight: float, reps: int, notes: str = "") -> bool:
         """Save weight log entry"""
@@ -572,6 +579,10 @@ class ReportRepository:
             weights = self.storage._load_json(self.storage.weights_file)
             exercises = self.storage.get_exercises()
 
+            logger.info(f"Exporting Excel with {len(sessions)} sessions, {len(weights)} weight logs, {len(exercises)} exercises")
+            for i, session in enumerate(sessions):
+                logger.debug(f"Session {i+1}: {session.get('name')} - {len(session.get('exercises', []))} exercises")
+
             # Create Downloads directory
             downloads_dir = self._get_downloads_directory()
             os.makedirs(downloads_dir, exist_ok=True)
@@ -653,6 +664,8 @@ class ReportRepository:
                         reps = exercise_log.get('reps', 0)
                         sets = exercise_info.get('sets', 1)
 
+                        logger.debug(f"Excel row - Exercise: {exercise_name}, Weight: {weight}, Reps: {reps}, Exercise log data: {exercise_log}")
+
                         if 'warmup' in session_name.lower():
                             session_type = 'Warmup'
                             weight_val = 'N/A'
@@ -723,8 +736,9 @@ class ReportRepository:
 
                 # Close workbook
                 workbook.close()
-                logger.info(f"Excel report created successfully: {filename}")
-                return filepath
+                workout_sessions = [s for s in sessions if 'warmup' not in s.get('name', '').lower()]
+                logger.info(f"Excel report created successfully: {filename} - {len(workout_sessions)} workout sessions, {len(sessions)} total sessions")
+                return f"{filepath}|{len(sessions)}|{len(workout_sessions)}"
 
             else:
                 # CSV export fallback (used when xlsxwriter is not available)
@@ -826,8 +840,9 @@ class ReportRepository:
                     writer.writerow(['Total Exercises in Database', len(exercises)])
                     writer.writerow(['Report Date Range', f'{AppConstants.REPORT_DAYS_RANGE} days'])
 
-                logger.info(f"CSV report created successfully: {filename}")
-                return filepath
+                workout_sessions = [s for s in sessions if 'warmup' not in s.get('name', '').lower()]
+                logger.info(f"CSV report created successfully: {filename} - {len(workout_sessions)} workout sessions, {len(sessions)} total sessions")
+                return f"{filepath}|{len(sessions)}|{len(workout_sessions)}"
 
         except Exception as e:
             logger.error(f"Excel export failed: {e}", exc_info=True)
@@ -1104,12 +1119,15 @@ class WorkoutScreen(BoxLayout):
                     return
 
                 self.app.storage.save_weight_log(exercise['id'], weight_val, reps_val)
-                self.completed_exercises.append({
+                exercise_data = {
                     'exercise_id': exercise['id'],
                     'name': exercise['name'],
                     'weight': weight_val,
                     'reps': reps_val
-                })
+                }
+                self.completed_exercises.append(exercise_data)
+                logger.info(f"Logged exercise: {exercise['name']} - {weight_val}kg x {reps_val} reps")
+                logger.debug(f"Exercise data: {exercise_data}")
 
                 # Show confirmation
                 popup = Popup(
@@ -1159,12 +1177,26 @@ class WorkoutScreen(BoxLayout):
     def complete_workout(self, instance):
         """Complete the workout session"""
         if self.completed_exercises:
-            self.app.workout_repo.log_workout(self.session_type, self.completed_exercises)
+            logger.info(f"Completing workout with {len(self.completed_exercises)} exercises")
+            logger.debug(f"Completed exercises data: {self.completed_exercises}")
+
+            success = self.app.workout_repo.log_workout(self.session_type, self.completed_exercises)
+
+            if success:
+                # Create summary of logged exercises
+                summary_text = f'Logged {len(self.completed_exercises)} exercises:\n\n'
+                for ex in self.completed_exercises:
+                    if ex.get('weight', 0) > 0:
+                        summary_text += f"• {ex['name']}: {ex['weight']}kg x {ex['reps']} reps\n"
+                    else:
+                        summary_text += f"• {ex['name']}: {ex['reps']} reps\n"
+            else:
+                summary_text = 'Error saving workout! Please try again.'
 
             popup = Popup(
-                title='Workout Complete!',
-                content=Label(text=f'Logged {len(self.completed_exercises)} exercises'),
-                size_hint=(0.6, 0.4)
+                title='Workout Complete!' if success else 'Error',
+                content=Label(text=summary_text),
+                size_hint=(0.8, 0.6)
             )
             popup.open()
 
@@ -1316,30 +1348,36 @@ SESSIONS COMPLETED:
             self.status_label.text = 'Generating report...'
 
             # Generate and save the report file
-            filepath = self.app.report_repo.export_to_excel_format()
+            result = self.app.report_repo.export_to_excel_format()
 
-            if filepath.startswith('Error:'):
+            if result.startswith('Error:'):
                 self.status_label.text = 'Download failed'
                 popup = Popup(
                     title='Download Error',
-                    content=Label(text=filepath),
+                    content=Label(text=result),
                     size_hint=(0.7, 0.4)
                 )
                 popup.open()
             else:
+                # Parse the result: filepath|total_sessions|workout_sessions
+                parts = result.split('|')
+                filepath = parts[0]
+                total_sessions = int(parts[1]) if len(parts) > 1 else 0
+                workout_sessions = int(parts[2]) if len(parts) > 2 else 0
+
                 filename = os.path.basename(filepath)
                 self.status_label.text = f'Downloaded: {filename}'
 
-                # Dynamic success message
+                # Dynamic success message with session info
                 if XLSX_AVAILABLE:
-                    msg = f'Excel report saved as:\n{filename}\n\nFormatted .xlsx file\nCheck your Downloads folder'
+                    msg = f'Excel report saved as:\n{filename}\n\nIncluded {workout_sessions} workout session(s) and {total_sessions - workout_sessions} warmup session(s)\n\nFormatted .xlsx file\nCheck your Downloads folder'
                 else:
-                    msg = f'Report saved as:\n{filename}\n\nCSV format - opens in any spreadsheet app\nCheck your Downloads folder'
+                    msg = f'Report saved as:\n{filename}\n\nIncluded {workout_sessions} workout session(s) and {total_sessions - workout_sessions} warmup session(s)\n\nCSV format - opens in any spreadsheet app\nCheck your Downloads folder'
 
                 popup = Popup(
                     title='Report Downloaded!',
                     content=Label(text=msg),
-                    size_hint=(0.8, 0.5)
+                    size_hint=(0.8, 0.6)
                 )
                 popup.open()
 
