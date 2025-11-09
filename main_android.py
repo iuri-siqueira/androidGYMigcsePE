@@ -652,11 +652,15 @@ class ReportRepository:
                     worksheet.write(row, col, header, col_header_format)
                 row += 1
 
+                logger.info(f"Exporting {len(sessions)} sessions to Excel...")
                 for session in sessions:
                     session_date = session.get('date', 'Unknown')
                     session_name = session.get('name', 'Workout')
+                    exercise_logs = session.get('exercises', [])
 
-                    for exercise_log in session.get('exercises', []):
+                    logger.info(f"Session: {session_name} - {len(exercise_logs)} exercises")
+
+                    for exercise_log in exercise_logs:
                         exercise_info = next((ex for ex in exercises if ex['id'] == exercise_log.get('exercise_id')), {})
                         exercise_name = exercise_log.get('name', exercise_info.get('name', 'Unknown'))
 
@@ -664,7 +668,7 @@ class ReportRepository:
                         reps = exercise_log.get('reps', 0)
                         sets = exercise_info.get('sets', 1)
 
-                        logger.debug(f"Excel row - Exercise: {exercise_name}, Weight: {weight}, Reps: {reps}, Exercise log data: {exercise_log}")
+                        logger.info(f"  → {exercise_name}: weight={weight}kg, reps={reps}, exercise_log={exercise_log}")
 
                         if 'warmup' in session_name.lower():
                             session_type = 'Warmup'
@@ -987,25 +991,29 @@ class WorkoutScreen(BoxLayout):
                 text='COMPLETE',
                 background_color=(0.2, 0.7, 0.2, 1)
             )
-            complete_btn.bind(on_press=lambda x: self.log_exercise(exercise, None, exercise['reps']))
+            # Fix closure bug: explicitly capture exercise reference
+            complete_btn.bind(on_press=lambda x, ex=exercise: self.log_exercise(ex, None, ex['reps']))
             input_layout.add_widget(complete_btn)
         else:
-            # For strength exercises: weight input + fixed reps display + log button
+            # For strength exercises: weight input + reps input + log button
             weight_input = TextInput(
-                hint_text='Weight',
+                hint_text='Weight (kg)',
                 multiline=False,
-                size_hint_x=0.5,
+                size_hint_x=0.4,
                 input_filter='float'
             )
 
             sets = exercise.get('sets', 3)
-            reps = exercise['reps']
+            default_reps = exercise['reps']
             unit = exercise.get('unit', 'reps')
-            reps_label = Label(
-                text=f"{sets}x{reps} {unit}",
-                font_size='14sp',
-                color=(1, 1, 1, 1),
-                size_hint_x=0.3
+
+            # Add reps input field so users can log actual reps completed
+            reps_input = TextInput(
+                text=str(default_reps),  # Pre-fill with recommended reps
+                hint_text=f'Reps ({sets}x{default_reps})',
+                multiline=False,
+                size_hint_x=0.35,
+                input_filter='int'
             )
 
             log_btn = Button(
@@ -1013,10 +1021,11 @@ class WorkoutScreen(BoxLayout):
                 size_hint_x=0.25,
                 background_color=(0.2, 0.7, 0.2, 1)
             )
-            log_btn.bind(on_press=lambda x: self.log_exercise(exercise, weight_input.text, exercise['reps']))
+            # Fix closure bug: explicitly capture widget references
+            log_btn.bind(on_press=lambda x, ex=exercise, wi=weight_input, ri=reps_input: self.log_exercise(ex, wi.text, ri.text))
 
             input_layout.add_widget(weight_input)
-            input_layout.add_widget(reps_label)
+            input_layout.add_widget(reps_input)
             input_layout.add_widget(log_btn)
 
         container.add_widget(info_layout)
@@ -1052,12 +1061,15 @@ class WorkoutScreen(BoxLayout):
                     popup.open()
                     return
 
-                self.completed_exercises.append({
+                warmup_data = {
                     'exercise_id': exercise['id'],
                     'name': exercise['name'],
                     'weight': 0,  # No weight for warmup
                     'reps': reps_val
-                })
+                }
+                self.completed_exercises.append(warmup_data)
+                logger.info(f"✓ Completed warmup: {exercise['name']} - {reps_val} reps")
+                logger.info(f"✓ Warmup data saved: {warmup_data}")
 
                 # Show confirmation
                 unit = exercise.get('unit', 'reps')
@@ -1126,8 +1138,9 @@ class WorkoutScreen(BoxLayout):
                     'reps': reps_val
                 }
                 self.completed_exercises.append(exercise_data)
-                logger.info(f"Logged exercise: {exercise['name']} - {weight_val}kg x {reps_val} reps")
-                logger.debug(f"Exercise data: {exercise_data}")
+                logger.info(f"✓ Logged exercise: {exercise['name']} - {weight_val}kg x {reps_val} reps")
+                logger.info(f"✓ Exercise data saved: {exercise_data}")
+                logger.info(f"✓ Total exercises in session: {len(self.completed_exercises)}")
 
                 # Show confirmation
                 popup = Popup(
