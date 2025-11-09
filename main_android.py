@@ -708,12 +708,24 @@ class ReportRepository:
         return self.storage.generate_weekly_report()
 
     def export_to_excel_format(self) -> str:
-        """Export data as downloadable Excel .xlsx file"""
+        """Export data as downloadable Excel .xlsx file matching template format with logged weights"""
         try:
             # Get data
             sessions = self.storage.get_workout_history(AppConstants.REPORT_DAYS_RANGE)
             weights = self.storage._load_json(self.storage.weights_file)
             exercises = self.storage.get_exercises()
+
+            # Build a map of exercise_name -> latest weight
+            exercise_weights = {}
+            for session in sessions:
+                for ex_log in session.get('exercises', []):
+                    ex_name = ex_log.get('name')
+                    ex_weight = ex_log.get('weight', 0)
+                    # Only save if it's a strength training exercise (weight > 0)
+                    if ex_weight > 0:
+                        # Update to most recent (sessions are sorted newest first usually)
+                        if ex_name not in exercise_weights:
+                            exercise_weights[ex_name] = ex_weight
 
             # Create Reports PE folder inside Downloads
             downloads_dir = self._get_downloads_directory()
@@ -732,139 +744,213 @@ class ReportRepository:
 
                 # Create workbook
                 workbook = xlsxwriter.Workbook(filepath)
-                worksheet = workbook.add_worksheet("IGCSE GYM Report")
+                worksheet = workbook.add_worksheet("Workout Plan")
 
                 # Define formats
+                title_format = workbook.add_format({
+                    'bold': True,
+                    'font_size': 14
+                })
                 header_format = workbook.add_format({
                     'bold': True,
-                    'font_size': 14,
-                    'bg_color': '#46008B',
-                    'font_color': 'white'
+                    'font_size': 11
                 })
-                section_format = workbook.add_format({
-                    'bold': True,
-                    'font_size': 12
-                })
-                col_header_format = workbook.add_format({'bold': True})
+                bold_format = workbook.add_format({'bold': True})
 
-                row = 0
+                row = 1  # Start at row 1 (0-indexed becomes row 2 in Excel)
 
-                # Main Header
-                worksheet.write(row, 0, AppConstants.REPORT_TITLE, header_format)
-                row += 1
-                worksheet.write(row, 0, f'Generated: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}')
-                row += 2
-
-                # Exercise Database Section
-                worksheet.write(row, 0, "EXERCISE DATABASE", section_format)
-                row += 1
-                headers = ['Exercise Name', 'Category', 'Sets', 'Reps', 'Description']
-                for col, header in enumerate(headers):
-                    worksheet.write(row, col, header, col_header_format)
+                # ===== WARMUP SECTION =====
+                worksheet.write(row, 0, "Warm up", title_format)
                 row += 1
 
-                for exercise in exercises:
-                    sets = exercise.get('sets', 1)
-                    reps = exercise['reps']
-                    unit = exercise.get('unit', 'reps')
-                    reps_display = f"{reps} {unit}" if unit != 'reps' else str(reps)
-
-                    worksheet.write(row, 0, exercise['name'])
-                    worksheet.write(row, 1, exercise['category'])
-                    worksheet.write(row, 2, sets if not exercise['category'].startswith('Warmup') else 1)
-                    worksheet.write(row, 3, reps_display)
-                    worksheet.write(row, 4, exercise['description'])
-                    row += 1
-
+                # Warmup headers
+                worksheet.write(row, 0, "Section", header_format)
+                worksheet.write(row, 3, "Exercise", header_format)
+                worksheet.write(row, 8, "Focus", header_format)
+                worksheet.write(row, 11, "Notes", header_format)
                 row += 1
 
-                # Workout Sessions Section
-                worksheet.write(row, 0, "WORKOUT SESSIONS", section_format)
-                row += 1
-                session_headers = ['Date', 'Session Type', 'Exercise', 'Weight (kg)', 'Reps Completed', 'Sets']
-                for col, header in enumerate(session_headers):
-                    worksheet.write(row, col, header, col_header_format)
-                row += 1
+                # Get warmup exercises by category
+                warmup_categories = [
+                    ("Dynamic mobility", "Warmup-Dynamic", 1),
+                    ("Proprioceptive/stability", "Warmup-Stability", 2),
+                    ("Movement integration", "Warmup-Movement", 3)
+                ]
 
-                for session in sessions:
-                    session_date = session.get('date', 'Unknown')
-                    session_name = session.get('name', 'Workout')
+                for category_name, category_filter, section_num in warmup_categories:
+                    category_exercises = [ex for ex in exercises if ex['category'] == category_filter]
 
-                    for exercise_log in session.get('exercises', []):
-                        exercise_info = next((ex for ex in exercises if ex['id'] == exercise_log.get('exercise_id')), {})
-                        exercise_name = exercise_log.get('name', exercise_info.get('name', 'Unknown'))
+                    for i, exercise in enumerate(category_exercises):
+                        # Section number only on first exercise of each category
+                        if i == 0:
+                            worksheet.write(row, 0, section_num)
 
-                        weight = exercise_log.get('weight', 0)
-                        reps = exercise_log.get('reps', 0)
-                        sets = exercise_info.get('sets', 1)
+                        # Category name (repeated for each exercise in category)
+                        worksheet.write(row, 1, category_name)
 
-                        if 'warmup' in session_name.lower():
-                            session_type = 'Warmup'
-                            weight_val = 'N/A'
+                        # Exercise name with reps
+                        reps = exercise.get('reps', '')
+                        unit = exercise.get('unit', 'reps')
+                        if unit != 'reps':
+                            exercise_text = f"{exercise['name']} x{reps} {unit}"
                         else:
-                            session_type = 'Strength Training'
-                            weight_val = weight
+                            exercise_text = f"{exercise['name']} x{reps}"
+                        worksheet.write(row, 3, exercise_text)
 
-                        worksheet.write(row, 0, session_date)
-                        worksheet.write(row, 1, session_type)
-                        worksheet.write(row, 2, exercise_name)
-                        worksheet.write(row, 3, weight_val)
-                        worksheet.write(row, 4, reps)
-                        worksheet.write(row, 5, sets if session_type != 'Warmup' else 'N/A')
+                        # Focus (use description as focus)
+                        worksheet.write(row, 8, exercise.get('description', ''))
+
+                        # Notes (can be filled in by user)
+                        worksheet.write(row, 11, "")
+
                         row += 1
 
+                    # Add section header row after each category
+                    if category_exercises:
+                        worksheet.write(row, 0, "Section", header_format)
+                        worksheet.write(row, 3, "Exercise", header_format)
+                        worksheet.write(row, 8, "Focus", header_format)
+                        worksheet.write(row, 11, "Notes", header_format)
+                        row += 1
+
+                row += 1  # Blank row before workout section
+
+                # ===== WORKOUT SECTION =====
+                worksheet.write(row, 0, "workout", title_format)
                 row += 1
 
-                # Warmup Tracking Section
-                worksheet.write(row, 0, "WARMUP COMPLETION LOG", section_format)
-                row += 1
-                warmup_headers = ['Date', 'Warmup Type', 'Exercises Completed', 'Total Time (estimated)']
-                for col, header in enumerate(warmup_headers):
-                    worksheet.write(row, col, header, col_header_format)
-                row += 1
-
-                warmup_sessions = [s for s in sessions if 'warmup' in s.get('name', '').lower()]
-                for warmup in warmup_sessions:
-                    warmup_type = 'Unknown'
-                    if 'dynamic' in warmup.get('name', '').lower():
-                        warmup_type = 'Dynamic Mobility'
-                    elif 'stability' in warmup.get('name', '').lower():
-                        warmup_type = 'Stability Training'
-                    elif 'movement' in warmup.get('name', '').lower():
-                        warmup_type = 'Movement Integration'
-
-                    exercise_count = len(warmup.get('exercises', []))
-                    estimated_time = f"{exercise_count * 2} minutes"
-
-                    worksheet.write(row, 0, warmup.get('date', 'Unknown'))
-                    worksheet.write(row, 1, warmup_type)
-                    worksheet.write(row, 2, exercise_count)
-                    worksheet.write(row, 3, estimated_time)
-                    row += 1
-
+                # Main workout headers
+                worksheet.write(row, 0, "session", header_format)
+                worksheet.write(row, 1, "Exercises", header_format)
+                worksheet.write(row, 4, "(Sets|Reps|Weight)", header_format)
+                worksheet.write(row, 16, "Recovery", header_format)
+                worksheet.write(row, 18, "Safety Notes", header_format)
                 row += 1
 
-                # Summary Statistics
-                worksheet.write(row, 0, "SUMMARY STATISTICS", section_format)
+                # Week sub-headers
+                worksheet.write(row, 4, "Week 1", bold_format)
+                worksheet.write(row, 6, "Weight", bold_format)
+                worksheet.write(row, 8, "Week 2", bold_format)
+                worksheet.write(row, 10, "Weight", bold_format)
+                worksheet.write(row, 12, "Week 3", bold_format)
+                worksheet.write(row, 14, "Weight", bold_format)
                 row += 1
-                worksheet.write(row, 0, "Total Workout Sessions")
-                worksheet.write(row, 1, len([s for s in sessions if 'warmup' not in s.get('name', '').lower()]))
-                row += 1
-                worksheet.write(row, 0, "Total Warmup Sessions")
-                worksheet.write(row, 1, len(warmup_sessions))
-                row += 1
-                worksheet.write(row, 0, "Total Exercises in Database")
-                worksheet.write(row, 1, len(exercises))
-                row += 1
-                worksheet.write(row, 0, "Report Date Range")
-                worksheet.write(row, 1, f"{AppConstants.REPORT_DAYS_RANGE} days")
 
-                # Auto-adjust column widths
-                worksheet.set_column(0, 0, 25)  # Exercise Name / Date
-                worksheet.set_column(1, 1, 20)  # Category / Type
-                worksheet.set_column(2, 2, 12)  # Sets
-                worksheet.set_column(3, 3, 15)  # Reps / Weight
-                worksheet.set_column(4, 4, 40)  # Description
+                # Get strength training exercises (Session 1 and Session 2)
+                session1_exercises = [
+                    "Back squat", "Bridge", "Bench press", "Bench superman",
+                    "Bentover Row", "Pallof Twist", "Shoulder press", "Knee Tucks"
+                ]
+                session2_exercises = [
+                    "Plank", "Incline Bench Press", "Pallof Press", "Lat Pull Downs",
+                    "Landmines", "Upright row", "Knee Tucks"
+                ]
+
+                # Session 1
+                worksheet.write(row, 0, 1)  # Session number
+                session1_data = [ex for ex in exercises if ex['name'] in session1_exercises and not ex['category'].startswith('Warmup')]
+
+                for i, exercise in enumerate(session1_data):
+                    if i > 0:
+                        row += 1
+
+                    # Exercise name
+                    worksheet.write(row, 1, exercise['name'])
+
+                    # Week 1: Progressive overload (12 reps)
+                    sets = exercise.get('sets', 3)
+                    week1_reps = ", ".join(["12"] * sets)
+                    worksheet.write(row, 4, week1_reps)
+
+                    # Week 1 Weight - Fill with logged weight if available
+                    logged_weight = exercise_weights.get(exercise['name'], "")
+                    worksheet.write(row, 6, logged_weight)
+
+                    # Week 2: Progressive overload (8 reps)
+                    week2_reps = ", ".join(["8"] * sets)
+                    worksheet.write(row, 8, week2_reps)
+
+                    # Week 2 Weight (empty for progression)
+                    worksheet.write(row, 10, "")
+
+                    # Week 3: Progressive overload (6 reps)
+                    week3_reps = ", ".join(["6"] * sets)
+                    worksheet.write(row, 12, week3_reps)
+
+                    # Week 3 Weight (empty for progression)
+                    worksheet.write(row, 14, "")
+
+                    # Recovery time (75 seconds standard)
+                    worksheet.write(row, 16, "75s")
+
+                    # Safety Notes (empty - user fills in)
+                    worksheet.write(row, 18, "")
+
+                row += 2  # Blank row
+
+                # Session header row
+                worksheet.write(row, 0, "Session", header_format)
+                worksheet.write(row, 1, "Exercises", header_format)
+                worksheet.write(row, 4, "(Sets|Reps|Weight)", header_format)
+                worksheet.write(row, 16, "Recovery", header_format)
+                worksheet.write(row, 18, "Safety Notes", header_format)
+                row += 1
+
+                # Week sub-headers
+                worksheet.write(row, 4, "Week 1", bold_format)
+                worksheet.write(row, 6, "Weight", bold_format)
+                worksheet.write(row, 8, "Week 2", bold_format)
+                worksheet.write(row, 10, "Weight", bold_format)
+                worksheet.write(row, 12, "Week 3", bold_format)
+                worksheet.write(row, 14, "Weight", bold_format)
+                row += 1
+
+                # Session 2
+                worksheet.write(row, 0, 2)  # Session number
+                session2_data = [ex for ex in exercises if ex['name'] in session2_exercises and not ex['category'].startswith('Warmup')]
+
+                for i, exercise in enumerate(session2_data):
+                    if i > 0:
+                        row += 1
+
+                    # Exercise name
+                    worksheet.write(row, 1, exercise['name'])
+
+                    # Week 1: Progressive overload (12 reps)
+                    sets = exercise.get('sets', 3)
+                    week1_reps = ", ".join(["12"] * sets)
+                    worksheet.write(row, 4, week1_reps)
+
+                    # Week 1 Weight - Fill with logged weight if available
+                    logged_weight = exercise_weights.get(exercise['name'], "")
+                    worksheet.write(row, 6, logged_weight)
+
+                    # Week 2: Progressive overload (8 reps)
+                    week2_reps = ", ".join(["8"] * sets)
+                    worksheet.write(row, 8, week2_reps)
+
+                    # Week 2 Weight (empty for progression)
+                    worksheet.write(row, 10, "")
+
+                    # Week 3: Progressive overload (6 reps)
+                    week3_reps = ", ".join(["6"] * sets)
+                    worksheet.write(row, 12, week3_reps)
+
+                    # Week 3 Weight (empty for progression)
+                    worksheet.write(row, 14, "")
+
+                    # Recovery time (75 seconds standard)
+                    worksheet.write(row, 16, "75s")
+
+                    # Safety Notes (empty)
+                    worksheet.write(row, 18, "")
+
+                # Auto-adjust column widths for better readability
+                worksheet.set_column(0, 0, 12)   # Session number
+                worksheet.set_column(1, 3, 25)   # Exercise names
+                worksheet.set_column(4, 15, 15)  # Week columns
+                worksheet.set_column(16, 16, 12) # Recovery
+                worksheet.set_column(18, 20, 30) # Safety notes
 
                 # Close workbook
                 workbook.close()
