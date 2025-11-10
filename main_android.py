@@ -1248,6 +1248,7 @@ class WorkoutScreen(BoxLayout):
                 multiline=False,
                 size_hint_x=0.55,
                 input_filter='float',
+                input_type='number',  # Show numeric keyboard on Android
                 font_size='15sp'
             )
 
