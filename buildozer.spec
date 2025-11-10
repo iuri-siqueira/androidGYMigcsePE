@@ -16,13 +16,14 @@ source.dir = .
 source.include_exts = py,png,jpg,kv,atlas,json,txt
 
 # (str) Application versioning (method 1)
-version = 1.0
+version = 1.2
 
 # (str) Application main entry point
 source.main = main_android.py
 
 # (list) Application requirements
 # xlsxwriter is pure Python - no C compilation needed
+# Let p4a master use its default Python 3.10.x version
 requirements = python3,kivy==2.3.0,xlsxwriter
 
 # (str) Custom source dirs for requirements
@@ -41,7 +42,9 @@ orientation = portrait
 fullscreen = 0
 
 # (list) Permissions
-# Storage permissions for saving workout reports
+# WRITE_EXTERNAL_STORAGE works for Android 9 and below
+# For Android 10+, app can write to app-specific external storage without permissions
+# INTERNET is for potential future features
 android.permissions = WRITE_EXTERNAL_STORAGE,READ_EXTERNAL_STORAGE,INTERNET
 
 # (int) Target Android API, should be as high as possible.
@@ -51,7 +54,9 @@ android.api = 33
 android.minapi = 21
 
 # (str) Android NDK version to use
+# Leave blank to auto-download or use system NDK
 android.ndk = 25b
+android.ndk_path =
 
 # (bool) Use --private data storage (True) or --dir public storage (False)
 android.private_storage = True
@@ -114,6 +119,13 @@ android.manifest.launch_mode = standard
 # (list) Android application meta-data to set (key=value format)
 android.meta_data = com.google.android.gms.version=12451000
 
+# (str) Android manifest attributes
+# Request legacy external storage for Android 10 (API 29) compatibility
+android.manifest.application_attrs = android:requestLegacyExternalStorage="true"
+
+# (list) Android additional features
+# android.features = android.hardware.usb.host
+
 # (str) Android logcat filters to use
 # android.logcat_filters = *:S python:D
 
@@ -138,8 +150,8 @@ android.meta_data = com.google.android.gms.version=12451000
 # p4a.fork = kivy
 
 # (str) python-for-android branch to use, defaults to master
-# Using develop branch for Python 3.11+ compatibility and latest fixes
-p4a.branch = develop
+# Using master for Python 3.10 compatibility (develop has issues)
+p4a.branch = master
 
 # (str) python-for-android git clone directory (if empty, it will be automatically cloned from github)
 # p4a.source_dir =

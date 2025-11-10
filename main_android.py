@@ -18,6 +18,21 @@ except ImportError:
 from datetime import datetime, timedelta
 from kivy.utils import platform
 
+# Android-specific imports for permissions and storage
+if platform == 'android':
+    from android.permissions import request_permissions, Permission, check_permission
+    from android.storage import primary_external_storage_path, app_storage_path
+else:
+    # Stub for non-Android platforms
+    def request_permissions(perms):
+        pass
+    def check_permission(perm):
+        return True
+    class Permission:
+        WRITE_EXTERNAL_STORAGE = "android.permission.WRITE_EXTERNAL_STORAGE"
+        READ_EXTERNAL_STORAGE = "android.permission.READ_EXTERNAL_STORAGE"
+        MANAGE_EXTERNAL_STORAGE = "android.permission.MANAGE_EXTERNAL_STORAGE"
+
 # Configure logging
 def setup_logging():
     """Setup application logging with rotating file handler"""
@@ -62,6 +77,130 @@ def setup_logging():
 # Initialize logger
 logger = setup_logging()
 logger.info("IGCSE GYM Application Starting")
+
+# Android Permissions Manager
+class PermissionsManager:
+    """Manages Android runtime permissions"""
+
+    @staticmethod
+    def request_storage_permissions(callback=None):
+        """Request storage permissions on Android with visible dialog"""
+        if platform == 'android':
+            logger.info("Requesting Android storage permissions")
+            permissions = [
+                Permission.WRITE_EXTERNAL_STORAGE,
+                Permission.READ_EXTERNAL_STORAGE,
+            ]
+
+            # For Android 11+ (API 30+), also request MANAGE_EXTERNAL_STORAGE if available
+            try:
+                permissions.append(Permission.MANAGE_EXTERNAL_STORAGE)
+            except AttributeError:
+                logger.info("MANAGE_EXTERNAL_STORAGE not available on this Android version")
+
+            request_permissions(permissions)
+            logger.info("Storage permissions requested")
+
+            # Show confirmation dialog
+            from kivy.uix.popup import Popup
+            from kivy.uix.label import Label
+            content = Label(
+                text='Storage permissions requested!\n\nThis app needs storage access to:\n• Save workout data\n• Export Excel reports\n\nPlease allow permissions when prompted.',
+                halign='center',
+                valign='center'
+            )
+            content.bind(size=content.setter('text_size'))
+            popup = Popup(
+                title='Permissions Required',
+                content=content,
+                size_hint=(0.8, 0.4),
+                auto_dismiss=True
+            )
+            if callback:
+                popup.bind(on_dismiss=callback)
+            popup.open()
+        else:
+            logger.info("Not on Android - skipping permission request")
+            if callback:
+                callback()
+
+    @staticmethod
+    def check_storage_permissions():
+        """Check if storage permissions are granted"""
+        if platform == 'android':
+            try:
+                from android import api_version
+                from android.permissions import check_permission, Permission
+
+                # Android 10+ (API 29+): WRITE_EXTERNAL_STORAGE is deprecated
+                # Apps can write to app-specific storage without any permissions
+                # So we always return True - permission not needed!
+                if api_version >= 29:
+                    logger.info("Android 10+: Using app-specific storage (no permission needed)")
+                    return True
+
+                # Android 9 and below: Check for legacy storage permissions
+                write_perm = check_permission(Permission.WRITE_EXTERNAL_STORAGE)
+                read_perm = check_permission(Permission.READ_EXTERNAL_STORAGE)
+
+                if write_perm and read_perm:
+                    logger.info("Storage permissions granted")
+                    return True
+                else:
+                    logger.warning("Storage permissions not granted")
+                    return False
+
+            except Exception as e:
+                logger.error(f"Error checking permissions: {e}")
+                # If we can't check, assume we have them
+                return True
+        else:
+            # Non-Android platforms don't need permission checks
+            return True
+
+    @staticmethod
+    def get_safe_storage_path():
+        """Get safe storage path - try Downloads first, fallback to app storage"""
+        if platform == 'android':
+            try:
+                # Try public Downloads folder first
+                base_path = primary_external_storage_path()
+                downloads_path = os.path.join(base_path, 'Download')
+
+                # Test if we can write to Downloads
+                if os.path.exists(downloads_path):
+                    # Create test file to verify write access
+                    test_file = os.path.join(downloads_path, '.test_write')
+                    try:
+                        with open(test_file, 'w') as f:
+                            f.write('test')
+                        os.remove(test_file)
+                        logger.info(f"Using Downloads folder: {downloads_path}")
+                        return downloads_path
+                    except:
+                        pass
+
+                # Fallback to app-specific storage
+                app_path = app_storage_path()
+                logger.info(f"Using app storage: {app_path}")
+                return app_path
+
+            except Exception as e:
+                logger.error(f"Error getting storage path: {e}")
+                # Last resort fallback
+                try:
+                    return app_storage_path()
+                except:
+                    return '/sdcard/Download'
+        else:
+            # Desktop platforms
+            home = os.path.expanduser("~")
+            downloads = os.path.join(home, 'Downloads')
+            if not os.path.exists(downloads):
+                downloads = os.path.join(home, 'Desktop')
+            if not os.path.exists(downloads):
+                downloads = home
+            return downloads
 
 # Application Constants
 class AppConstants:
@@ -126,6 +265,7 @@ from kivy.uix.gridlayout import GridLayout
 from kivy.graphics import Color, Rectangle, Line, RoundedRectangle
 from kivy.clock import Clock
 from kivy.animation import Animation
+from kivy.core.window import Window
 
 class DataStorage:
     """Lightweight data storage using JSON files - preserves ALL functionality"""
@@ -227,13 +367,14 @@ class DataStorage:
         exercises.append(exercise)
         return self._save_json(self.exercises_file, exercises)
 
-    def save_workout_session(self, session_name: str, exercises_completed: List[Dict[str, Any]]) -> bool:
-        """Save workout session"""
+    def save_workout_session(self, session_name: str, exercises_completed: List[Dict[str, Any]], week_number: int = 1) -> bool:
+        """Save workout session with week number for progressive overload tracking"""
         sessions = self._load_json(self.sessions_file)
         session = {
             'id': len(sessions) + 1,
             'name': session_name,
             'date': datetime.now().isoformat(),
+            'week': week_number,  # Store which week this workout was performed in
             'exercises': exercises_completed
         }
         sessions.append(session)
@@ -544,10 +685,10 @@ class WorkoutRepository:
 
         return all_exercises
 
-    def log_workout(self, session_type: str, completed_exercises: List[Dict[str, Any]]) -> bool:
-        """Log completed workout"""
+    def log_workout(self, session_type: str, completed_exercises: List[Dict[str, Any]], week_number: int = 1) -> bool:
+        """Log completed workout with week number for progressive overload tracking"""
         session_name = f"{session_type.title()} - {datetime.now().strftime('%Y-%m-%d')}"
-        return self.storage.save_workout_session(session_name, completed_exercises)
+        return self.storage.save_workout_session(session_name, completed_exercises, week_number)
 
     def get_exercise_history(self, exercise_id: int) -> List[Dict[str, Any]]:
         """Get history for specific exercise"""
@@ -565,171 +706,277 @@ class ReportRepository:
         return self.storage.generate_weekly_report()
 
     def export_to_excel_format(self) -> str:
-        """Export data as downloadable Excel .xlsx file"""
+        """Export data as downloadable Excel .xlsx file matching template format with logged weights"""
         try:
             # Get data
             sessions = self.storage.get_workout_history(AppConstants.REPORT_DAYS_RANGE)
             weights = self.storage._load_json(self.storage.weights_file)
             exercises = self.storage.get_exercises()
 
-            # Create Downloads directory
-            downloads_dir = self._get_downloads_directory()
-            os.makedirs(downloads_dir, exist_ok=True)
+            # Build a map of exercise_name -> {week: weight}
+            # This tracks the latest weight for each exercise in each week
+            exercise_weights = {}
+            for session in sessions:
+                week_num = session.get('week', 1)  # Get which week this workout was from
+                for ex_log in session.get('exercises', []):
+                    ex_name = ex_log.get('name')
+                    ex_weight = ex_log.get('weight', 0)
+                    # Only save if it's a strength training exercise (weight > 0)
+                    if ex_weight > 0:
+                        # Initialize dict for this exercise if not exists
+                        if ex_name not in exercise_weights:
+                            exercise_weights[ex_name] = {}
+                        # Store weight for this week (most recent will overwrite)
+                        if week_num not in exercise_weights[ex_name]:
+                            exercise_weights[ex_name][week_num] = ex_weight
 
-            # Generate filename with timestamp
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            # Create Reports PE folder inside Downloads
+            downloads_dir = self._get_downloads_directory()
+            reports_folder = os.path.join(downloads_dir, "Reports PE")
+            os.makedirs(reports_folder, exist_ok=True)
+
+            # Generate filename with month/day format: Report_MM-DD.xlsx
+            now = datetime.now()
+            filename_date = now.strftime("%m-%d")  # Example: 11-06
 
             if XLSX_AVAILABLE:
                 # Create Excel file with xlsxwriter (pure Python, works on Android)
-                filename = f"IGCSE_GYM_Report_{timestamp}.xlsx"
-                filepath = os.path.join(downloads_dir, filename)
+                filename = f"Report_{filename_date}.xlsx"
+                filepath = os.path.join(reports_folder, filename)
                 logger.info(f"Creating Excel report with xlsxwriter: {filepath}")
 
                 # Create workbook
                 workbook = xlsxwriter.Workbook(filepath)
-                worksheet = workbook.add_worksheet("IGCSE GYM Report")
+                worksheet = workbook.add_worksheet("Workout Plan")
 
                 # Define formats
+                title_format = workbook.add_format({
+                    'bold': True,
+                    'font_size': 14
+                })
                 header_format = workbook.add_format({
                     'bold': True,
-                    'font_size': 14,
-                    'bg_color': '#46008B',
-                    'font_color': 'white'
+                    'font_size': 11
                 })
-                section_format = workbook.add_format({
-                    'bold': True,
-                    'font_size': 12
-                })
-                col_header_format = workbook.add_format({'bold': True})
+                bold_format = workbook.add_format({'bold': True})
 
-                row = 0
+                row = 1  # Start at row 1 (0-indexed becomes row 2 in Excel)
 
-                # Main Header
-                worksheet.write(row, 0, AppConstants.REPORT_TITLE, header_format)
-                row += 1
-                worksheet.write(row, 0, f'Generated: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}')
-                row += 2
-
-                # Exercise Database Section
-                worksheet.write(row, 0, "EXERCISE DATABASE", section_format)
-                row += 1
-                headers = ['Exercise Name', 'Category', 'Sets', 'Reps', 'Description']
-                for col, header in enumerate(headers):
-                    worksheet.write(row, col, header, col_header_format)
+                # ===== WARMUP SECTION =====
+                worksheet.write(row, 0, "Warm up", title_format)
                 row += 1
 
-                for exercise in exercises:
-                    sets = exercise.get('sets', 1)
-                    reps = exercise['reps']
-                    unit = exercise.get('unit', 'reps')
-                    reps_display = f"{reps} {unit}" if unit != 'reps' else str(reps)
-
-                    worksheet.write(row, 0, exercise['name'])
-                    worksheet.write(row, 1, exercise['category'])
-                    worksheet.write(row, 2, sets if not exercise['category'].startswith('Warmup') else 1)
-                    worksheet.write(row, 3, reps_display)
-                    worksheet.write(row, 4, exercise['description'])
-                    row += 1
-
+                # Warmup headers
+                worksheet.write(row, 0, "Section", header_format)
+                worksheet.write(row, 3, "Exercise", header_format)
+                worksheet.write(row, 8, "Focus", header_format)
+                worksheet.write(row, 11, "Notes", header_format)
                 row += 1
 
-                # Workout Sessions Section
-                worksheet.write(row, 0, "WORKOUT SESSIONS", section_format)
-                row += 1
-                session_headers = ['Date', 'Session Type', 'Exercise', 'Weight (kg)', 'Reps Completed', 'Sets']
-                for col, header in enumerate(session_headers):
-                    worksheet.write(row, col, header, col_header_format)
-                row += 1
+                # Get warmup exercises by category
+                warmup_categories = [
+                    ("Dynamic mobility", "Warmup-Dynamic", 1),
+                    ("Proprioceptive/stability", "Warmup-Stability", 2),
+                    ("Movement integration", "Warmup-Movement", 3)
+                ]
 
-                for session in sessions:
-                    session_date = session.get('date', 'Unknown')
-                    session_name = session.get('name', 'Workout')
+                for category_name, category_filter, section_num in warmup_categories:
+                    category_exercises = [ex for ex in exercises if ex['category'] == category_filter]
 
-                    for exercise_log in session.get('exercises', []):
-                        exercise_info = next((ex for ex in exercises if ex['id'] == exercise_log.get('exercise_id')), {})
-                        exercise_name = exercise_log.get('name', exercise_info.get('name', 'Unknown'))
+                    for i, exercise in enumerate(category_exercises):
+                        # Section number only on first exercise of each category
+                        if i == 0:
+                            worksheet.write(row, 0, section_num)
 
-                        weight = exercise_log.get('weight', 0)
-                        reps = exercise_log.get('reps', 0)
-                        sets = exercise_info.get('sets', 1)
+                        # Category name (repeated for each exercise in category)
+                        worksheet.write(row, 1, category_name)
 
-                        if 'warmup' in session_name.lower():
-                            session_type = 'Warmup'
-                            weight_val = 'N/A'
+                        # Exercise name with reps
+                        reps = exercise.get('reps', '')
+                        unit = exercise.get('unit', 'reps')
+                        if unit != 'reps':
+                            exercise_text = f"{exercise['name']} x{reps} {unit}"
                         else:
-                            session_type = 'Strength Training'
-                            weight_val = weight
+                            exercise_text = f"{exercise['name']} x{reps}"
+                        worksheet.write(row, 3, exercise_text)
 
-                        worksheet.write(row, 0, session_date)
-                        worksheet.write(row, 1, session_type)
-                        worksheet.write(row, 2, exercise_name)
-                        worksheet.write(row, 3, weight_val)
-                        worksheet.write(row, 4, reps)
-                        worksheet.write(row, 5, sets if session_type != 'Warmup' else 'N/A')
+                        # Focus (use description as focus)
+                        worksheet.write(row, 8, exercise.get('description', ''))
+
+                        # Notes (can be filled in by user)
+                        worksheet.write(row, 11, "")
+
                         row += 1
 
+                    # Add section header row after each category
+                    if category_exercises:
+                        worksheet.write(row, 0, "Section", header_format)
+                        worksheet.write(row, 3, "Exercise", header_format)
+                        worksheet.write(row, 8, "Focus", header_format)
+                        worksheet.write(row, 11, "Notes", header_format)
+                        row += 1
+
+                row += 1  # Blank row before workout section
+
+                # ===== WORKOUT SECTION =====
+                worksheet.write(row, 0, "workout", title_format)
                 row += 1
 
-                # Warmup Tracking Section
-                worksheet.write(row, 0, "WARMUP COMPLETION LOG", section_format)
-                row += 1
-                warmup_headers = ['Date', 'Warmup Type', 'Exercises Completed', 'Total Time (estimated)']
-                for col, header in enumerate(warmup_headers):
-                    worksheet.write(row, col, header, col_header_format)
-                row += 1
-
-                warmup_sessions = [s for s in sessions if 'warmup' in s.get('name', '').lower()]
-                for warmup in warmup_sessions:
-                    warmup_type = 'Unknown'
-                    if 'dynamic' in warmup.get('name', '').lower():
-                        warmup_type = 'Dynamic Mobility'
-                    elif 'stability' in warmup.get('name', '').lower():
-                        warmup_type = 'Stability Training'
-                    elif 'movement' in warmup.get('name', '').lower():
-                        warmup_type = 'Movement Integration'
-
-                    exercise_count = len(warmup.get('exercises', []))
-                    estimated_time = f"{exercise_count * 2} minutes"
-
-                    worksheet.write(row, 0, warmup.get('date', 'Unknown'))
-                    worksheet.write(row, 1, warmup_type)
-                    worksheet.write(row, 2, exercise_count)
-                    worksheet.write(row, 3, estimated_time)
-                    row += 1
-
+                # Main workout headers
+                worksheet.write(row, 0, "session", header_format)
+                worksheet.write(row, 1, "Exercises", header_format)
+                worksheet.write(row, 4, "(Sets|Reps|Weight)", header_format)
+                worksheet.write(row, 16, "Recovery", header_format)
+                worksheet.write(row, 18, "Safety Notes", header_format)
                 row += 1
 
-                # Summary Statistics
-                worksheet.write(row, 0, "SUMMARY STATISTICS", section_format)
+                # Week sub-headers
+                worksheet.write(row, 4, "Week 1", bold_format)
+                worksheet.write(row, 6, "Weight", bold_format)
+                worksheet.write(row, 8, "Week 2", bold_format)
+                worksheet.write(row, 10, "Weight", bold_format)
+                worksheet.write(row, 12, "Week 3", bold_format)
+                worksheet.write(row, 14, "Weight", bold_format)
                 row += 1
-                worksheet.write(row, 0, "Total Workout Sessions")
-                worksheet.write(row, 1, len([s for s in sessions if 'warmup' not in s.get('name', '').lower()]))
-                row += 1
-                worksheet.write(row, 0, "Total Warmup Sessions")
-                worksheet.write(row, 1, len(warmup_sessions))
-                row += 1
-                worksheet.write(row, 0, "Total Exercises in Database")
-                worksheet.write(row, 1, len(exercises))
-                row += 1
-                worksheet.write(row, 0, "Report Date Range")
-                worksheet.write(row, 1, f"{AppConstants.REPORT_DAYS_RANGE} days")
 
-                # Auto-adjust column widths
-                worksheet.set_column(0, 0, 25)  # Exercise Name / Date
-                worksheet.set_column(1, 1, 20)  # Category / Type
-                worksheet.set_column(2, 2, 12)  # Sets
-                worksheet.set_column(3, 3, 15)  # Reps / Weight
-                worksheet.set_column(4, 4, 40)  # Description
+                # Get strength training exercises (Session 1 and Session 2)
+                session1_exercises = [
+                    "Back squat", "Bridge", "Bench press", "Bench superman",
+                    "Bentover Row", "Pallof Twist", "Shoulder press", "Knee Tucks"
+                ]
+                session2_exercises = [
+                    "Plank", "Incline Bench Press", "Pallof Press", "Lat Pull Downs",
+                    "Landmines", "Upright row", "Knee Tucks"
+                ]
+
+                # Session 1
+                worksheet.write(row, 0, 1)  # Session number
+                session1_data = [ex for ex in exercises if ex['name'] in session1_exercises and not ex['category'].startswith('Warmup')]
+
+                for i, exercise in enumerate(session1_data):
+                    if i > 0:
+                        row += 1
+
+                    # Exercise name
+                    worksheet.write(row, 1, exercise['name'])
+
+                    # Week 1: Progressive overload (12 reps)
+                    sets = exercise.get('sets', 3)
+                    week1_reps = ", ".join(["12"] * sets)
+                    worksheet.write(row, 4, week1_reps)
+
+                    # Week 1 Weight - Fill with logged weight if available for week 1
+                    ex_week_data = exercise_weights.get(exercise['name'], {})
+                    week1_weight = ex_week_data.get(1, "")
+                    worksheet.write(row, 6, week1_weight)
+
+                    # Week 2: Progressive overload (8 reps)
+                    week2_reps = ", ".join(["8"] * sets)
+                    worksheet.write(row, 8, week2_reps)
+
+                    # Week 2 Weight - Fill with logged weight if available for week 2
+                    week2_weight = ex_week_data.get(2, "")
+                    worksheet.write(row, 10, week2_weight)
+
+                    # Week 3: Progressive overload (6 reps)
+                    week3_reps = ", ".join(["6"] * sets)
+                    worksheet.write(row, 12, week3_reps)
+
+                    # Week 3 Weight - Fill with logged weight if available for week 3
+                    week3_weight = ex_week_data.get(3, "")
+                    worksheet.write(row, 14, week3_weight)
+
+                    # Recovery time (75 seconds standard)
+                    worksheet.write(row, 16, "75s")
+
+                    # Safety Notes (empty - user fills in)
+                    worksheet.write(row, 18, "")
+
+                row += 2  # Blank row
+
+                # Session header row
+                worksheet.write(row, 0, "Session", header_format)
+                worksheet.write(row, 1, "Exercises", header_format)
+                worksheet.write(row, 4, "(Sets|Reps|Weight)", header_format)
+                worksheet.write(row, 16, "Recovery", header_format)
+                worksheet.write(row, 18, "Safety Notes", header_format)
+                row += 1
+
+                # Week sub-headers
+                worksheet.write(row, 4, "Week 1", bold_format)
+                worksheet.write(row, 6, "Weight", bold_format)
+                worksheet.write(row, 8, "Week 2", bold_format)
+                worksheet.write(row, 10, "Weight", bold_format)
+                worksheet.write(row, 12, "Week 3", bold_format)
+                worksheet.write(row, 14, "Weight", bold_format)
+                row += 1
+
+                # Session 2
+                worksheet.write(row, 0, 2)  # Session number
+                session2_data = [ex for ex in exercises if ex['name'] in session2_exercises and not ex['category'].startswith('Warmup')]
+
+                for i, exercise in enumerate(session2_data):
+                    if i > 0:
+                        row += 1
+
+                    # Exercise name
+                    worksheet.write(row, 1, exercise['name'])
+
+                    # Week 1: Progressive overload (12 reps)
+                    sets = exercise.get('sets', 3)
+                    week1_reps = ", ".join(["12"] * sets)
+                    worksheet.write(row, 4, week1_reps)
+
+                    # Week 1 Weight - Fill with logged weight if available for week 1
+                    ex_week_data = exercise_weights.get(exercise['name'], {})
+                    week1_weight = ex_week_data.get(1, "")
+                    worksheet.write(row, 6, week1_weight)
+
+                    # Week 2: Progressive overload (8 reps)
+                    week2_reps = ", ".join(["8"] * sets)
+                    worksheet.write(row, 8, week2_reps)
+
+                    # Week 2 Weight - Fill with logged weight if available for week 2
+                    week2_weight = ex_week_data.get(2, "")
+                    worksheet.write(row, 10, week2_weight)
+
+                    # Week 3: Progressive overload (6 reps)
+                    week3_reps = ", ".join(["6"] * sets)
+                    worksheet.write(row, 12, week3_reps)
+
+                    # Week 3 Weight - Fill with logged weight if available for week 3
+                    week3_weight = ex_week_data.get(3, "")
+                    worksheet.write(row, 14, week3_weight)
+
+                    # Recovery time (75 seconds standard)
+                    worksheet.write(row, 16, "75s")
+
+                    # Safety Notes (empty)
+                    worksheet.write(row, 18, "")
+
+                # Auto-adjust column widths for better readability
+                worksheet.set_column(0, 0, 12)   # Session number
+                worksheet.set_column(1, 3, 25)   # Exercise names
+                worksheet.set_column(4, 15, 15)  # Week columns
+                worksheet.set_column(16, 16, 12) # Recovery
+                worksheet.set_column(18, 20, 30) # Safety notes
 
                 # Close workbook
                 workbook.close()
-                logger.info(f"Excel report created successfully: {filename}")
-                return filepath
+
+                # Verify file was actually created
+                if os.path.exists(filepath) and os.path.getsize(filepath) > 0:
+                    logger.info(f"Excel report created successfully: {filename}")
+                    return filepath
+                else:
+                    error_msg = "Error: File creation failed. Check storage permissions."
+                    logger.error(error_msg)
+                    return error_msg
 
             else:
                 # CSV export fallback (used when xlsxwriter is not available)
-                filename = f"IGCSE_GYM_Report_{timestamp}.csv"
-                filepath = os.path.join(downloads_dir, filename)
+                filename = f"Report_{filename_date}.csv"
+                filepath = os.path.join(reports_folder, filename)
                 logger.info(f"Creating CSV report (xlsxwriter not available): {filepath}")
 
                 with open(filepath, 'w', newline='', encoding='utf-8') as csvfile:
@@ -826,8 +1073,14 @@ class ReportRepository:
                     writer.writerow(['Total Exercises in Database', len(exercises)])
                     writer.writerow(['Report Date Range', f'{AppConstants.REPORT_DAYS_RANGE} days'])
 
-                logger.info(f"CSV report created successfully: {filename}")
-                return filepath
+                # Verify file was actually created
+                if os.path.exists(filepath) and os.path.getsize(filepath) > 0:
+                    logger.info(f"CSV report created successfully: {filename}")
+                    return filepath
+                else:
+                    error_msg = "Error: CSV file creation failed. Check storage permissions."
+                    logger.error(error_msg)
+                    return error_msg
 
         except Exception as e:
             logger.error(f"Excel export failed: {e}", exc_info=True)
@@ -835,26 +1088,8 @@ class ReportRepository:
 
     def _get_downloads_directory(self) -> str:
         """Get the appropriate downloads directory based on platform"""
-        if platform == 'android':
-            # Android Downloads folder
-            try:
-                from android.storage import primary_external_storage_path
-                android_downloads = os.path.join(primary_external_storage_path(), 'Download')
-                logger.info(f"Using Android downloads path: {android_downloads}")
-                return android_downloads
-            except Exception as e:
-                logger.warning(f"Failed to get Android storage path: {e}, using fallback")
-                # Fallback to app's internal storage
-                return os.path.join(os.path.expanduser("~"), 'Downloads')
-        else:
-            # Desktop Downloads folder
-            home = os.path.expanduser("~")
-            downloads = os.path.join(home, 'Downloads')
-            if not os.path.exists(downloads):
-                downloads = os.path.join(home, 'Desktop')  # Fallback
-            if not os.path.exists(downloads):
-                downloads = home  # Last resort fallback
-            return downloads
+        # Use the improved permissions manager to get safe storage path
+        return PermissionsManager.get_safe_storage_path()
 
 class WorkoutScreen(BoxLayout):
     """Main workout screen with all features"""
@@ -862,8 +1097,8 @@ class WorkoutScreen(BoxLayout):
     def __init__(self, session_type, app_instance, **kwargs):
         super().__init__(**kwargs)
         self.orientation = 'vertical'
-        self.padding = 20
-        self.spacing = 15
+        self.padding = 10  # Reduced from 20 for more space
+        self.spacing = 10  # Reduced from 15
         self.session_type = session_type
         self.app = app_instance
         self.completed_exercises = []
@@ -893,9 +1128,9 @@ class WorkoutScreen(BoxLayout):
         )
         self.add_widget(title)
 
-        # Exercise list
+        # Exercise list - reduced spacing for full screen layout
         scroll = ScrollView()
-        exercise_layout = GridLayout(cols=1, spacing=10, size_hint_y=None)
+        exercise_layout = GridLayout(cols=1, spacing=6, size_hint_y=None, padding=(0, 0))
         exercise_layout.bind(minimum_height=exercise_layout.setter('height'))
 
         exercises = self.app.workout_repo.get_session_exercises(self.session_type)
@@ -907,40 +1142,52 @@ class WorkoutScreen(BoxLayout):
         scroll.add_widget(exercise_layout)
         self.add_widget(scroll)
 
-        # Control buttons
-        button_layout = BoxLayout(size_hint_y=None, height=60, spacing=10)
+        # Control buttons - use vertical layout to prevent cramping
+        button_container = BoxLayout(orientation='vertical', size_hint_y=None, height=200, spacing=8)
 
-        complete_btn = StyledButton(text='COMPLETE WORKOUT')
+        # Top row: Complete and Timer buttons - thicker for single line text
+        top_row = BoxLayout(size_hint_y=None, height=85, spacing=10)
+
+        complete_btn = StyledButton(text='COMPLETE WORKOUT', font_size='14sp')
         complete_btn.bind(on_press=self.complete_workout)
-        button_layout.add_widget(complete_btn)
+        top_row.add_widget(complete_btn)
 
         # Add REST TIMER button only for strength training sessions (not warmup)
         if not self.session_type.startswith('warmup'):
-            rest_timer_btn = StyledButton(text='⏱️ REST TIMER (75s)')
+            rest_timer_btn = StyledButton(text='⏱️ REST TIMER (75s)', font_size='14sp')
             rest_timer_btn.bind(on_press=self.start_session_rest_timer)
-            button_layout.add_widget(rest_timer_btn)
+            top_row.add_widget(rest_timer_btn)
 
-        back_btn = StyledButton(text='← GO BACK')
+        button_container.add_widget(top_row)
+
+        # Bottom row: Back button - also thicker
+        back_btn = StyledButton(text='← GO BACK', font_size='16sp', size_hint_y=None, height=85)
         back_btn.bind(on_press=self.go_back)
-        button_layout.add_widget(back_btn)
+        button_container.add_widget(back_btn)
 
-        self.add_widget(button_layout)
+        self.add_widget(button_container)
 
     def create_exercise_widget(self, exercise):
         """Create widget for individual exercise"""
-        container = BoxLayout(orientation='horizontal', size_hint_y=None, height=80, spacing=10)
+        # Adaptive height based on screen size (min 85, max 110)
+        screen_height = Window.height
+        adaptive_height = min(max(screen_height / 8, 85), 110)
 
-        # Exercise info
-        info_layout = BoxLayout(orientation='vertical', size_hint_x=0.6)
+        container = BoxLayout(orientation='horizontal', size_hint_y=None, height=adaptive_height, spacing=8)
+
+        # Exercise info - use more screen width (60% instead of 55%)
+        info_layout = BoxLayout(orientation='vertical', size_hint_x=0.6, spacing=3)
 
         name_label = Label(
             text=exercise['name'],
-            font_size='18sp',
-            bold=True,
+            font_size='18sp',  # Increased for better readability
             color=(1, 1, 1, 1),
-            halign='left'
+            halign='left',
+            valign='top',
+            size_hint_y=0.4,
+            text_size=(None, None)  # Let text size naturally
         )
-        name_label.bind(size=name_label.setter('text_size'))
+        name_label.bind(width=lambda *x: setattr(name_label, 'text_size', (name_label.width, None)))
 
         # Show sets x reps format matching Excel sheet
         is_warmup = exercise['category'].startswith('Warmup')
@@ -953,55 +1200,64 @@ class WorkoutScreen(BoxLayout):
             reps_text = f"{sets}x{reps} {unit}"
 
         desc_label = Label(
-            text=f"{exercise['description']} - {reps_text}",
-            font_size='14sp',
-            color=(0.8, 0.8, 0.8, 1),
-            halign='left'
+            text=f"{exercise['description']}",
+            font_size='13sp',
+            color=(0.7, 0.7, 0.7, 1),
+            halign='left',
+            valign='top',
+            size_hint_y=0.35,
+            text_size=(None, None)
         )
-        desc_label.bind(size=desc_label.setter('text_size'))
+        desc_label.bind(width=lambda *x: setattr(desc_label, 'text_size', (desc_label.width, None)))
+
+        # Separate label for sets x reps - clear and visible
+        reps_display = Label(
+            text=reps_text,
+            font_size='15sp',  # Increased for visibility
+            color=(0.5, 0.8, 1.0, 1),  # Light blue color to stand out
+            halign='left',
+            valign='top',
+            size_hint_y=0.25,
+            text_size=(None, None)
+        )
+        reps_display.bind(width=lambda *x: setattr(reps_display, 'text_size', (reps_display.width, None)))
 
         info_layout.add_widget(name_label)
         info_layout.add_widget(desc_label)
+        info_layout.add_widget(reps_display)
 
-        # Input layout - different for warmup vs strength exercises
+        # Input layout - use remaining 40% efficiently
         input_layout = BoxLayout(orientation='horizontal', size_hint_x=0.4, spacing=5)
 
         if is_warmup:
             # For warmup: only show completion button (no weight/reps input)
             complete_btn = Button(
                 text='COMPLETE',
-                background_color=(0.2, 0.7, 0.2, 1)
+                background_color=(0.2, 0.7, 0.2, 1),
+                font_size='14sp'
             )
             complete_btn.bind(on_press=lambda x: self.log_exercise(exercise, None, exercise['reps']))
             input_layout.add_widget(complete_btn)
         else:
-            # For strength exercises: weight input + fixed reps display + log button
+            # For strength exercises: weight input + log button
             weight_input = TextInput(
                 hint_text='Weight',
                 multiline=False,
-                size_hint_x=0.5,
-                input_filter='float'
-            )
-
-            sets = exercise.get('sets', 3)
-            reps = exercise['reps']
-            unit = exercise.get('unit', 'reps')
-            reps_label = Label(
-                text=f"{sets}x{reps} {unit}",
-                font_size='14sp',
-                color=(1, 1, 1, 1),
-                size_hint_x=0.3
+                size_hint_x=0.55,
+                input_filter='float',
+                input_type='number',  # Show numeric keyboard on Android
+                font_size='15sp'
             )
 
             log_btn = Button(
                 text='LOG',
-                size_hint_x=0.25,
-                background_color=(0.2, 0.7, 0.2, 1)
+                size_hint_x=0.45,
+                background_color=(0.2, 0.7, 0.2, 1),
+                font_size='14sp'
             )
             log_btn.bind(on_press=lambda x: self.log_exercise(exercise, weight_input.text, exercise['reps']))
 
             input_layout.add_widget(weight_input)
-            input_layout.add_widget(reps_label)
             input_layout.add_widget(log_btn)
 
         container.add_widget(info_layout)
@@ -1043,6 +1299,10 @@ class WorkoutScreen(BoxLayout):
                     'weight': 0,  # No weight for warmup
                     'reps': reps_val
                 })
+
+                # Log to console for debugging
+                logger.info(f"Logged warmup exercise: {exercise['name']}, reps: {reps_val}")
+                logger.info(f"Total exercises logged in session: {len(self.completed_exercises)}")
 
                 # Show confirmation
                 unit = exercise.get('unit', 'reps')
@@ -1111,6 +1371,10 @@ class WorkoutScreen(BoxLayout):
                     'reps': reps_val
                 })
 
+                # Log to console for debugging
+                logger.info(f"Logged strength exercise: {exercise['name']}, weight: {weight_val}kg, reps: {reps_val}")
+                logger.info(f"Total exercises logged in session: {len(self.completed_exercises)}")
+
                 # Show confirmation
                 popup = Popup(
                     title='Exercise Logged',
@@ -1159,14 +1423,33 @@ class WorkoutScreen(BoxLayout):
     def complete_workout(self, instance):
         """Complete the workout session"""
         if self.completed_exercises:
-            self.app.workout_repo.log_workout(self.session_type, self.completed_exercises)
+            logger.info(f"Completing workout session: {self.session_type}")
+            logger.info(f"Total exercises to save: {len(self.completed_exercises)}")
+            logger.info(f"Current week: Week {self.app.current_week}")
+
+            # Log workout with current week number
+            success = self.app.workout_repo.log_workout(self.session_type, self.completed_exercises, self.app.current_week)
+
+            if success:
+                logger.info(f"Workout saved successfully for Week {self.app.current_week}!")
+            else:
+                logger.error("Failed to save workout!")
 
             popup = Popup(
                 title='Workout Complete!',
-                content=Label(text=f'Logged {len(self.completed_exercises)} exercises'),
-                size_hint=(0.6, 0.4)
+                content=Label(text=f'Saved {len(self.completed_exercises)} exercises\nWeek {self.app.current_week} - {self.session_type}'),
+                size_hint=(0.7, 0.4)
             )
             popup.open()
+        else:
+            logger.warning("No exercises logged in this session")
+            popup = Popup(
+                title='No Exercises Logged',
+                content=Label(text='Please log at least one exercise before completing the workout'),
+                size_hint=(0.7, 0.4)
+            )
+            popup.open()
+            return
 
         self.go_back(instance)
 
@@ -1313,44 +1596,168 @@ SESSIONS COMPLETED:
     def download_excel_report(self, instance):
         """Download workout report file"""
         try:
+            # Check and request storage permissions first - CRITICAL for Xiaomi/HyperOS
+            if platform == 'android':
+                if not PermissionsManager.check_storage_permissions():
+                    logger.warning("Storage permissions not granted, requesting now...")
+
+                    # Request storage permissions for Excel export
+                    from android.permissions import request_permissions, Permission
+
+                    # Request storage permissions (works on all Android versions)
+                    # On Android 10+, if denied, app will use app-specific storage automatically
+                    request_permissions([
+                        Permission.WRITE_EXTERNAL_STORAGE,
+                        Permission.READ_EXTERNAL_STORAGE,
+                    ])
+
+                    # Show beautiful permission dialog
+                    from kivy.uix.boxlayout import BoxLayout
+                    from kivy.uix.button import Button
+
+                    content = BoxLayout(orientation='vertical', spacing=15, padding=20)
+
+                    # Add background
+                    with content.canvas.before:
+                        Color(0.15, 0.15, 0.15, 1)
+                        content.rect = Rectangle(size=content.size, pos=content.pos)
+                    content.bind(size=lambda *x: setattr(content.rect, 'size', content.size))
+                    content.bind(pos=lambda *x: setattr(content.rect, 'pos', content.pos))
+
+                    # Icon label
+                    icon_label = Label(
+                        text='📁',
+                        font_size='48sp',
+                        size_hint_y=None,
+                        height=60
+                    )
+                    content.add_widget(icon_label)
+
+                    # Title
+                    title_label = Label(
+                        text='Storage Permission Needed',
+                        font_size='20sp',
+                        bold=True,
+                        color=(1, 1, 1, 1),
+                        size_hint_y=None,
+                        height=30
+                    )
+                    content.add_widget(title_label)
+
+                    # Message
+                    msg_label = Label(
+                        text='To download Excel reports,\nthis app needs storage access.\n\n'
+                             'Android will ask for permission.\nPlease tap ALLOW.\n\n'
+                             'After allowing, tap RETRY to download.',
+                        font_size='15sp',
+                        color=(0.9, 0.9, 0.9, 1),
+                        halign='center',
+                        valign='middle',
+                        size_hint_y=0.5
+                    )
+                    msg_label.bind(size=msg_label.setter('text_size'))
+                    content.add_widget(msg_label)
+
+                    # Button layout with better styling
+                    btn_layout = BoxLayout(size_hint_y=None, height=60, spacing=12)
+
+                    retry_btn = Button(
+                        text='🔄 Retry',
+                        font_size='15sp',
+                        background_color=(0.275, 0.545, 0.859, 1),  # Nice blue
+                        background_normal=''
+                    )
+
+                    cancel_btn = Button(
+                        text='Cancel',
+                        font_size='15sp',
+                        background_color=(0.6, 0.6, 0.6, 1),
+                        background_normal=''
+                    )
+
+                    btn_layout.add_widget(retry_btn)
+                    btn_layout.add_widget(cancel_btn)
+                    content.add_widget(btn_layout)
+
+                    popup = Popup(
+                        title='',
+                        title_size='0sp',  # Hide default title
+                        content=content,
+                        size_hint=(0.88, 0.65),
+                        auto_dismiss=False,
+                        separator_color=(0, 0, 0, 0)  # Hide separator
+                    )
+
+                    def on_retry(btn):
+                        popup.dismiss()
+                        # User will tap DOWNLOAD EXCEL again to retry
+
+                    retry_btn.bind(on_press=on_retry)
+                    cancel_btn.bind(on_press=lambda x: popup.dismiss())
+
+                    popup.open()
+                    return  # Don't continue until permissions granted
+
+                # Double-check permissions were actually granted
+                if not PermissionsManager.check_storage_permissions():
+                    popup = Popup(
+                        title='Permission Still Denied',
+                        content=Label(text='Storage permission is required to download reports.\n\nPlease enable it in Android Settings:\nSettings → Apps → IGCSE GYM → Permissions → Storage'),
+                        size_hint=(0.85, 0.5)
+                    )
+                    popup.open()
+                    return
+
             self.status_label.text = 'Generating report...'
 
             # Generate and save the report file
             filepath = self.app.report_repo.export_to_excel_format()
 
-            if filepath.startswith('Error:'):
-                self.status_label.text = 'Download failed'
-                popup = Popup(
-                    title='Download Error',
-                    content=Label(text=filepath),
-                    size_hint=(0.7, 0.4)
-                )
-                popup.open()
-            else:
-                filename = os.path.basename(filepath)
-                self.status_label.text = f'Downloaded: {filename}'
+            # Check if download actually succeeded
+            if filepath.startswith('Error:') or not filepath or not os.path.exists(filepath):
+                self.status_label.text = 'Download FAILED'
 
-                # Dynamic success message
-                if XLSX_AVAILABLE:
-                    msg = f'Excel report saved as:\n{filename}\n\nFormatted .xlsx file\nCheck your Downloads folder'
-                else:
-                    msg = f'Report saved as:\n{filename}\n\nCSV format - opens in any spreadsheet app\nCheck your Downloads folder'
+                error_msg = filepath if filepath.startswith('Error:') else 'File was not created. Permission denied or storage full.'
 
                 popup = Popup(
-                    title='Report Downloaded!',
-                    content=Label(text=msg),
+                    title='❌ Download Failed',
+                    content=Label(
+                        text=f'{error_msg}\n\nCheck:\n• Storage permissions enabled\n• Enough free space',
+                        halign='center'
+                    ),
                     size_hint=(0.8, 0.5)
                 )
                 popup.open()
+                logger.error(f"Export failed: {filepath}")
+            else:
+                # SUCCESS - file actually exists
+                filename = os.path.basename(filepath)
+                filesize = os.path.getsize(filepath) / 1024  # KB
+                self.status_label.text = f'✓ Downloaded: {filename}'
+
+                # Dynamic success message
+                if XLSX_AVAILABLE:
+                    msg = f'✓ Excel report saved!\n\n{filename}\n({filesize:.1f} KB)\n\nFormatted .xlsx file\nLocation: Downloads folder'
+                else:
+                    msg = f'✓ Report saved!\n\n{filename}\n({filesize:.1f} KB)\n\nCSV format\nLocation: Downloads folder'
+
+                popup = Popup(
+                    title='✓ Download Complete!',
+                    content=Label(text=msg, halign='center'),
+                    size_hint=(0.8, 0.55)
+                )
+                popup.open()
+                logger.info(f"Export successful: {filepath} ({filesize:.1f} KB)")
 
         except Exception as e:
-            self.status_label.text = 'Download failed'
+            self.status_label.text = 'Download ERROR'
             popup = Popup(
-                title='Download Error',
-                content=Label(text=f'Failed to generate report:\n{str(e)}'),
-                size_hint=(0.7, 0.4)
+                title='❌ Download Error',
+                content=Label(text=f'Failed to generate report:\n\n{str(e)}\n\nCheck storage permissions.'),
+                size_hint=(0.8, 0.5)
             )
             popup.open()
+            logger.error(f"Export exception: {e}", exc_info=True)
 
     def go_back(self, instance):
         """Return to main menu"""
@@ -1445,19 +1852,71 @@ class IGCSEGymApp(App):
     """Main application class with ALL features"""
 
     def build(self):
+        # Request storage permissions on Android (must be done early)
+        logger.info("Initializing IGCSE GYM Application")
+        PermissionsManager.request_storage_permissions()
+
         # Initialize storage and repositories
         self.storage = DataStorage()
         self.workout_repo = WorkoutRepository(self.storage)
         self.report_repo = ReportRepository(self.storage)
 
+        # Screen navigation history for back button
+        self.screen_history = []
+
+        # Initialize current week (default to Week 1)
+        self.current_week = 1
+
+        # Bind Android back button handler
+        if platform == 'android':
+            Window.bind(on_keyboard=self.on_android_back_button)
+
         # Create main layout
         self.main_layout = BoxLayout()
         self.show_main_screen()
 
+        logger.info("IGCSE GYM Application initialized successfully")
         return self.main_layout
+
+    def on_android_back_button(self, window, key, *args):
+        """Handle Android back button with smooth slide animation"""
+        if key == 27:  # Back button key code
+            if self.screen_history:
+                # Animate back to previous screen
+                current_screen = self.main_layout.children[0]
+
+                # Slide out animation
+                anim = Animation(x=Window.width, duration=0.3, t='in_out_quad')
+                anim.bind(on_complete=lambda *x: self._navigate_back())
+                anim.start(current_screen)
+
+                return True  # Consume the event
+            else:
+                # On main screen, allow default behavior (exit app)
+                return False
+        return False
+
+    def _navigate_back(self):
+        """Navigate to previous screen after animation completes"""
+        if self.screen_history:
+            previous_screen = self.screen_history.pop()
+            self.main_layout.clear_widgets()
+
+            # Add previous screen with slide in animation from left
+            previous_screen.x = -Window.width
+            self.main_layout.add_widget(previous_screen)
+
+            # Slide in animation
+            anim = Animation(x=0, duration=0.3, t='in_out_quad')
+            anim.start(previous_screen)
+        else:
+            self.show_main_screen()
 
     def show_main_screen(self):
         """Display main menu screen"""
+        # Clear history when returning to main screen
+        self.screen_history = []
+
         self.main_layout.clear_widgets()
 
         main_screen = BoxLayout(orientation='vertical', padding=20, spacing=15)
@@ -1475,15 +1934,42 @@ class IGCSEGymApp(App):
             bold=True,
             color=(1, 1, 1, 1),
             size_hint_y=None,
-            height=100
+            height=80
         )
         main_screen.add_widget(title)
 
-        # Warm-up button - leads to warmup menu
+        # Week Selector Section
+        week_label = Label(
+            text=f'Current Week: Week {self.current_week}',
+            font_size='18sp',
+            bold=True,
+            color=(0.275, 0.545, 0.859, 1),  # Blue color
+            size_hint_y=None,
+            height=30
+        )
+        main_screen.add_widget(week_label)
+
+        # Week selector buttons
+        week_buttons = BoxLayout(size_hint_y=None, height=60, spacing=10)
+
+        for week_num in [1, 2, 3]:
+            week_btn = Button(
+                text=f'Week {week_num}',
+                font_size='16sp',
+                background_color=(0.275, 0.545, 0.859, 1) if week_num == self.current_week else (0.5, 0.5, 0.5, 1),
+                background_normal=''
+            )
+            week_btn.bind(on_press=lambda btn, w=week_num: self.select_week(w))
+            week_buttons.add_widget(week_btn)
+
+        main_screen.add_widget(week_buttons)
+
+        # Warm-up button - leads to warmup menu (increased size for better touch)
         warmup_btn = StyledButton(
             text='WARM-UP ROUTINES',
             size_hint_y=None,
-            height=70
+            height=90,
+            font_size='20sp'
         )
         warmup_btn.bind(on_press=lambda x: self.show_warmup_menu())
         main_screen.add_widget(warmup_btn)
@@ -1492,7 +1978,8 @@ class IGCSEGymApp(App):
         session1_btn = StyledButton(
             text='WORKOUT SESSION 1',
             size_hint_y=None,
-            height=70
+            height=90,
+            font_size='20sp'
         )
         session1_btn.bind(on_press=lambda x: self.show_workout_screen('session1'))
         main_screen.add_widget(session1_btn)
@@ -1501,7 +1988,8 @@ class IGCSEGymApp(App):
         session2_btn = StyledButton(
             text='WORKOUT SESSION 2',
             size_hint_y=None,
-            height=70
+            height=90,
+            font_size='20sp'
         )
         session2_btn.bind(on_press=lambda x: self.show_workout_screen('session2'))
         main_screen.add_widget(session2_btn)
@@ -1510,7 +1998,8 @@ class IGCSEGymApp(App):
         reports_btn = StyledButton(
             text='VIEW REPORTS',
             size_hint_y=None,
-            height=70
+            height=90,
+            font_size='20sp'
         )
         reports_btn.bind(on_press=lambda x: self.show_reports_screen())
         main_screen.add_widget(reports_btn)
@@ -1537,6 +2026,17 @@ Select a workout type above to begin!
         status_label.bind(size=status_label.setter('text_size'))
         main_screen.add_widget(status_label)
 
+        # Erase All Data button at bottom
+        erase_btn = Button(
+            text='🗑️ ERASE ALL DATA',
+            size_hint_y=None,
+            height=60,
+            font_size='16sp',
+            background_color=(0.8, 0.2, 0.2, 1)  # Red color
+        )
+        erase_btn.bind(on_press=self.show_erase_confirmation)
+        main_screen.add_widget(erase_btn)
+
         self.main_layout.add_widget(main_screen)
         self.main_screen_ref = main_screen
 
@@ -1544,20 +2044,128 @@ Select a workout type above to begin!
         instance.rect.pos = instance.pos
         instance.rect.size = instance.size
 
+    def select_week(self, week_number):
+        """Select the current week for progressive overload tracking"""
+        self.current_week = week_number
+        logger.info(f"Week {week_number} selected")
+        # Refresh main screen to update button colors and label
+        self.show_main_screen()
+
+    def show_erase_confirmation(self, instance):
+        """Show confirmation dialog for erasing workout data"""
+        content = BoxLayout(orientation='vertical', spacing=10, padding=10)
+
+        warning_label = Label(
+            text='⚠️ WARNING ⚠️\n\nThis will erase all your workout history!\n\nType "yes" or "Yes" to confirm:',
+            halign='center',
+            valign='middle',
+            size_hint_y=0.6
+        )
+        warning_label.bind(size=warning_label.setter('text_size'))
+        content.add_widget(warning_label)
+
+        confirm_input = TextInput(
+            hint_text='Type: yes',
+            multiline=False,
+            size_hint_y=None,
+            height=40,
+            font_size='18sp'
+        )
+        content.add_widget(confirm_input)
+
+        button_row = BoxLayout(size_hint_y=None, height=50, spacing=10)
+
+        cancel_btn = Button(
+            text='CANCEL',
+            background_color=(0.5, 0.5, 0.5, 1)
+        )
+        button_row.add_widget(cancel_btn)
+
+        erase_btn = Button(
+            text='ERASE',
+            background_color=(0.8, 0.2, 0.2, 1)
+        )
+        button_row.add_widget(erase_btn)
+
+        content.add_widget(button_row)
+
+        popup = Popup(
+            title='Confirm Data Erasure',
+            content=content,
+            size_hint=(0.85, 0.5),
+            auto_dismiss=False
+        )
+
+        def on_cancel(btn):
+            popup.dismiss()
+
+        def on_erase(btn):
+            if confirm_input.text in ['yes', 'Yes']:
+                # Erase workout history
+                self.erase_all_workout_data()
+                popup.dismiss()
+
+                # Show success message
+                success_popup = Popup(
+                    title='Data Erased',
+                    content=Label(text='All workout history has been erased!'),
+                    size_hint=(0.7, 0.3)
+                )
+                success_popup.open()
+
+                # Refresh main screen to show updated counts
+                self.show_main_screen()
+            else:
+                # Show error message
+                error_popup = Popup(
+                    title='Confirmation Failed',
+                    content=Label(text='You must type exactly "yes" or "Yes" to confirm'),
+                    size_hint=(0.7, 0.3)
+                )
+                error_popup.open()
+
+        cancel_btn.bind(on_press=on_cancel)
+        erase_btn.bind(on_press=on_erase)
+
+        popup.open()
+
+    def erase_all_workout_data(self):
+        """Erase all workout history (sessions and weight logs)"""
+        try:
+            # Clear sessions file
+            self.storage._save_json(self.storage.sessions_file, [])
+            # Clear weights file
+            self.storage._save_json(self.storage.weights_file, [])
+            logger.info("All workout data erased successfully")
+        except Exception as e:
+            logger.error(f"Error erasing workout data: {e}")
+
     def show_workout_screen(self, session_type):
         """Show workout screen for specific session type"""
+        # Save current screen to history for back navigation
+        if self.main_layout.children:
+            self.screen_history.append(self.main_layout.children[0])
+
         self.main_layout.clear_widgets()
         workout_screen = WorkoutScreen(session_type, self)
         self.main_layout.add_widget(workout_screen)
 
     def show_reports_screen(self):
         """Show reports and analytics screen"""
+        # Save current screen to history for back navigation
+        if self.main_layout.children:
+            self.screen_history.append(self.main_layout.children[0])
+
         self.main_layout.clear_widgets()
         reports_screen = ReportsScreen(self)
         self.main_layout.add_widget(reports_screen)
 
     def show_warmup_menu(self):
         """Show warmup selection menu with three tabs"""
+        # Save current screen to history for back navigation
+        if self.main_layout.children:
+            self.screen_history.append(self.main_layout.children[0])
+
         self.main_layout.clear_widgets()
         warmup_menu = WarmupMenuScreen(self)
         self.main_layout.add_widget(warmup_menu)
