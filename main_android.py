@@ -370,13 +370,14 @@ class DataStorage:
         exercises.append(exercise)
         return self._save_json(self.exercises_file, exercises)
 
-    def save_workout_session(self, session_name: str, exercises_completed: List[Dict[str, Any]]) -> bool:
-        """Save workout session"""
+    def save_workout_session(self, session_name: str, exercises_completed: List[Dict[str, Any]], week_number: int = 1) -> bool:
+        """Save workout session with week number for progressive overload tracking"""
         sessions = self._load_json(self.sessions_file)
         session = {
             'id': len(sessions) + 1,
             'name': session_name,
             'date': datetime.now().isoformat(),
+            'week': week_number,  # Store which week this workout was performed in
             'exercises': exercises_completed
         }
         sessions.append(session)
@@ -687,10 +688,10 @@ class WorkoutRepository:
 
         return all_exercises
 
-    def log_workout(self, session_type: str, completed_exercises: List[Dict[str, Any]]) -> bool:
-        """Log completed workout"""
+    def log_workout(self, session_type: str, completed_exercises: List[Dict[str, Any]], week_number: int = 1) -> bool:
+        """Log completed workout with week number for progressive overload tracking"""
         session_name = f"{session_type.title()} - {datetime.now().strftime('%Y-%m-%d')}"
-        return self.storage.save_workout_session(session_name, completed_exercises)
+        return self.storage.save_workout_session(session_name, completed_exercises, week_number)
 
     def get_exercise_history(self, exercise_id: int) -> List[Dict[str, Any]]:
         """Get history for specific exercise"""
@@ -715,17 +716,22 @@ class ReportRepository:
             weights = self.storage._load_json(self.storage.weights_file)
             exercises = self.storage.get_exercises()
 
-            # Build a map of exercise_name -> latest weight
+            # Build a map of exercise_name -> {week: weight}
+            # This tracks the latest weight for each exercise in each week
             exercise_weights = {}
             for session in sessions:
+                week_num = session.get('week', 1)  # Get which week this workout was from
                 for ex_log in session.get('exercises', []):
                     ex_name = ex_log.get('name')
                     ex_weight = ex_log.get('weight', 0)
                     # Only save if it's a strength training exercise (weight > 0)
                     if ex_weight > 0:
-                        # Update to most recent (sessions are sorted newest first usually)
+                        # Initialize dict for this exercise if not exists
                         if ex_name not in exercise_weights:
-                            exercise_weights[ex_name] = ex_weight
+                            exercise_weights[ex_name] = {}
+                        # Store weight for this week (most recent will overwrite)
+                        if week_num not in exercise_weights[ex_name]:
+                            exercise_weights[ex_name][week_num] = ex_weight
 
             # Create Reports PE folder inside Downloads
             downloads_dir = self._get_downloads_directory()
@@ -862,23 +868,26 @@ class ReportRepository:
                     week1_reps = ", ".join(["12"] * sets)
                     worksheet.write(row, 4, week1_reps)
 
-                    # Week 1 Weight - Fill with logged weight if available
-                    logged_weight = exercise_weights.get(exercise['name'], "")
-                    worksheet.write(row, 6, logged_weight)
+                    # Week 1 Weight - Fill with logged weight if available for week 1
+                    ex_week_data = exercise_weights.get(exercise['name'], {})
+                    week1_weight = ex_week_data.get(1, "")
+                    worksheet.write(row, 6, week1_weight)
 
                     # Week 2: Progressive overload (8 reps)
                     week2_reps = ", ".join(["8"] * sets)
                     worksheet.write(row, 8, week2_reps)
 
-                    # Week 2 Weight (empty for progression)
-                    worksheet.write(row, 10, "")
+                    # Week 2 Weight - Fill with logged weight if available for week 2
+                    week2_weight = ex_week_data.get(2, "")
+                    worksheet.write(row, 10, week2_weight)
 
                     # Week 3: Progressive overload (6 reps)
                     week3_reps = ", ".join(["6"] * sets)
                     worksheet.write(row, 12, week3_reps)
 
-                    # Week 3 Weight (empty for progression)
-                    worksheet.write(row, 14, "")
+                    # Week 3 Weight - Fill with logged weight if available for week 3
+                    week3_weight = ex_week_data.get(3, "")
+                    worksheet.write(row, 14, week3_weight)
 
                     # Recovery time (75 seconds standard)
                     worksheet.write(row, 16, "75s")
@@ -921,23 +930,26 @@ class ReportRepository:
                     week1_reps = ", ".join(["12"] * sets)
                     worksheet.write(row, 4, week1_reps)
 
-                    # Week 1 Weight - Fill with logged weight if available
-                    logged_weight = exercise_weights.get(exercise['name'], "")
-                    worksheet.write(row, 6, logged_weight)
+                    # Week 1 Weight - Fill with logged weight if available for week 1
+                    ex_week_data = exercise_weights.get(exercise['name'], {})
+                    week1_weight = ex_week_data.get(1, "")
+                    worksheet.write(row, 6, week1_weight)
 
                     # Week 2: Progressive overload (8 reps)
                     week2_reps = ", ".join(["8"] * sets)
                     worksheet.write(row, 8, week2_reps)
 
-                    # Week 2 Weight (empty for progression)
-                    worksheet.write(row, 10, "")
+                    # Week 2 Weight - Fill with logged weight if available for week 2
+                    week2_weight = ex_week_data.get(2, "")
+                    worksheet.write(row, 10, week2_weight)
 
                     # Week 3: Progressive overload (6 reps)
                     week3_reps = ", ".join(["6"] * sets)
                     worksheet.write(row, 12, week3_reps)
 
-                    # Week 3 Weight (empty for progression)
-                    worksheet.write(row, 14, "")
+                    # Week 3 Weight - Fill with logged weight if available for week 3
+                    week3_weight = ex_week_data.get(3, "")
+                    worksheet.write(row, 14, week3_weight)
 
                     # Recovery time (75 seconds standard)
                     worksheet.write(row, 16, "75s")
@@ -1415,18 +1427,19 @@ class WorkoutScreen(BoxLayout):
         if self.completed_exercises:
             logger.info(f"Completing workout session: {self.session_type}")
             logger.info(f"Total exercises to save: {len(self.completed_exercises)}")
+            logger.info(f"Current week: Week {self.app.current_week}")
 
-            # Log workout
-            success = self.app.workout_repo.log_workout(self.session_type, self.completed_exercises)
+            # Log workout with current week number
+            success = self.app.workout_repo.log_workout(self.session_type, self.completed_exercises, self.app.current_week)
 
             if success:
-                logger.info("Workout saved successfully!")
+                logger.info(f"Workout saved successfully for Week {self.app.current_week}!")
             else:
                 logger.error("Failed to save workout!")
 
             popup = Popup(
                 title='Workout Complete!',
-                content=Label(text=f'Saved {len(self.completed_exercises)} exercises to {self.session_type}'),
+                content=Label(text=f'Saved {len(self.completed_exercises)} exercises\nWeek {self.app.current_week} - {self.session_type}'),
                 size_hint=(0.7, 0.4)
             )
             popup.open()
@@ -1861,6 +1874,9 @@ class IGCSEGymApp(App):
         # Screen navigation history for back button
         self.screen_history = []
 
+        # Initialize current week (default to Week 1)
+        self.current_week = 1
+
         # Bind Android back button handler
         if platform == 'android':
             Window.bind(on_keyboard=self.on_android_back_button)
@@ -1928,9 +1944,35 @@ class IGCSEGymApp(App):
             bold=True,
             color=(1, 1, 1, 1),
             size_hint_y=None,
-            height=100
+            height=80
         )
         main_screen.add_widget(title)
+
+        # Week Selector Section
+        week_label = Label(
+            text=f'Current Week: Week {self.current_week}',
+            font_size='18sp',
+            bold=True,
+            color=(0.275, 0.545, 0.859, 1),  # Blue color
+            size_hint_y=None,
+            height=30
+        )
+        main_screen.add_widget(week_label)
+
+        # Week selector buttons
+        week_buttons = BoxLayout(size_hint_y=None, height=60, spacing=10)
+
+        for week_num in [1, 2, 3]:
+            week_btn = Button(
+                text=f'Week {week_num}',
+                font_size='16sp',
+                background_color=(0.275, 0.545, 0.859, 1) if week_num == self.current_week else (0.5, 0.5, 0.5, 1),
+                background_normal=''
+            )
+            week_btn.bind(on_press=lambda btn, w=week_num: self.select_week(w))
+            week_buttons.add_widget(week_btn)
+
+        main_screen.add_widget(week_buttons)
 
         # Warm-up button - leads to warmup menu (increased size for better touch)
         warmup_btn = StyledButton(
@@ -2011,6 +2053,13 @@ Select a workout type above to begin!
     def _update_main_rect(self, instance, value):
         instance.rect.pos = instance.pos
         instance.rect.size = instance.size
+
+    def select_week(self, week_number):
+        """Select the current week for progressive overload tracking"""
+        self.current_week = week_number
+        logger.info(f"Week {week_number} selected")
+        # Refresh main screen to update button colors and label
+        self.show_main_screen()
 
     def show_erase_confirmation(self, instance):
         """Show confirmation dialog for erasing workout data"""
