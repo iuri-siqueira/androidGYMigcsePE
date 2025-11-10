@@ -132,13 +132,14 @@ class PermissionsManager:
                 from android import api_version
                 from android.permissions import check_permission, Permission
 
-                # Android 10+ (API 29+) can write to app-specific external storage without permissions
-                # So we always return True for Android 10+
+                # Android 10+ (API 29+): WRITE_EXTERNAL_STORAGE is deprecated
+                # Apps can write to app-specific storage without any permissions
+                # So we always return True - permission not needed!
                 if api_version >= 29:
-                    logger.info("Android 10+ detected - app-specific storage available without permissions")
+                    logger.info("Android 10+: Using app-specific storage (no permission needed)")
                     return True
 
-                # For Android 9 and below, check for storage permissions
+                # Android 9 and below: Check for legacy storage permissions
                 write_perm = check_permission(Permission.WRITE_EXTERNAL_STORAGE)
                 read_perm = check_permission(Permission.READ_EXTERNAL_STORAGE)
 
@@ -151,7 +152,7 @@ class PermissionsManager:
 
             except Exception as e:
                 logger.error(f"Error checking permissions: {e}")
-                # Assume we have permissions if we can't check
+                # If we can't check, assume we have them
                 return True
         else:
             # Non-Android platforms don't need permission checks
@@ -159,46 +160,38 @@ class PermissionsManager:
 
     @staticmethod
     def get_safe_storage_path():
-        """Get safe storage path for current Android version"""
+        """Get safe storage path - try Downloads first, fallback to app storage"""
         if platform == 'android':
             try:
-                from android import api_version
-                from android.permissions import check_permission, Permission
+                # Try public Downloads folder first
+                base_path = primary_external_storage_path()
+                downloads_path = os.path.join(base_path, 'Download')
 
-                # On Android 10+ (API 29+), use app-specific external storage
-                # This doesn't require any permissions and files are visible to user
-                if api_version >= 29:
-                    # Check if we have legacy storage permission (Android 9 users upgrading)
-                    has_write_perm = check_permission(Permission.WRITE_EXTERNAL_STORAGE)
-
-                    if has_write_perm:
-                        # Try shared Downloads folder if we have permission
-                        base_path = primary_external_storage_path()
-                        downloads_path = os.path.join(base_path, 'Download')
-                        if os.path.exists(downloads_path) and os.access(downloads_path, os.W_OK):
-                            logger.info(f"Using shared Downloads path: {downloads_path}")
-                            return downloads_path
-
-                    # Use app-specific external storage (no permissions needed on Android 10+)
-                    app_path = app_storage_path()
-                    logger.info(f"Using app-specific storage (Android 10+): {app_path}")
-                    return app_path
-                else:
-                    # Android 9 and below - try Downloads folder with permissions
-                    base_path = primary_external_storage_path()
-                    downloads_path = os.path.join(base_path, 'Download')
-
-                    if os.path.exists(downloads_path) and os.access(downloads_path, os.W_OK):
-                        logger.info(f"Using external Downloads path: {downloads_path}")
+                # Test if we can write to Downloads
+                if os.path.exists(downloads_path):
+                    # Create test file to verify write access
+                    test_file = os.path.join(downloads_path, '.test_write')
+                    try:
+                        with open(test_file, 'w') as f:
+                            f.write('test')
+                        os.remove(test_file)
+                        logger.info(f"Using Downloads folder: {downloads_path}")
                         return downloads_path
-                    else:
-                        logger.warning("Cannot access Downloads, using app storage")
-                        return app_storage_path()
+                    except:
+                        pass
+
+                # Fallback to app-specific storage
+                app_path = app_storage_path()
+                logger.info(f"Using app storage: {app_path}")
+                return app_path
 
             except Exception as e:
                 logger.error(f"Error getting storage path: {e}")
-                # Last resort: use app's storage
-                return app_storage_path()
+                # Last resort fallback
+                try:
+                    return app_storage_path()
+                except:
+                    return '/sdcard/Download'
         else:
             # Desktop platforms
             home = os.path.expanduser("~")
