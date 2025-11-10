@@ -42,9 +42,10 @@ orientation = portrait
 fullscreen = 0
 
 # (list) Permissions
-# Android 15 / Xiaomi HyperOS compatible permissions
-# Modern approach: READ_MEDIA_* for Android 13+, legacy for older versions
-android.permissions = WRITE_EXTERNAL_STORAGE,READ_EXTERNAL_STORAGE,INTERNET,MANAGE_EXTERNAL_STORAGE,READ_MEDIA_IMAGES,READ_MEDIA_VIDEO,READ_MEDIA_AUDIO
+# WRITE_EXTERNAL_STORAGE works for Android 9 and below
+# For Android 10+, app can write to app-specific external storage without permissions
+# INTERNET is for potential future features
+android.permissions = WRITE_EXTERNAL_STORAGE,READ_EXTERNAL_STORAGE,INTERNET
 
 # (int) Target Android API, should be as high as possible.
 android.api = 33

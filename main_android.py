@@ -126,43 +126,27 @@ class PermissionsManager:
 
     @staticmethod
     def check_storage_permissions():
-        """Check if storage permissions are granted - Android 13+ compatible"""
+        """Check if storage permissions are granted"""
         if platform == 'android':
             try:
                 from android import api_version
                 from android.permissions import check_permission, Permission
 
-                # Android 13+ (API 33+) uses new media permissions
-                if api_version >= 33:
-                    # Check for new READ_MEDIA_* permissions
-                    try:
-                        media_images = check_permission(Permission.READ_MEDIA_IMAGES)
-                        media_video = check_permission(Permission.READ_MEDIA_VIDEO)
-                        media_audio = check_permission(Permission.READ_MEDIA_AUDIO)
+                # Android 10+ (API 29+) can write to app-specific external storage without permissions
+                # So we always return True for Android 10+
+                if api_version >= 29:
+                    logger.info("Android 10+ detected - app-specific storage available without permissions")
+                    return True
 
-                        # At least one media permission should be granted
-                        has_media_perms = media_images or media_video or media_audio
-
-                        if has_media_perms:
-                            logger.info("Media permissions granted (Android 13+)")
-                            return True
-                        else:
-                            logger.warning("Media permissions not granted (Android 13+)")
-                            return False
-                    except AttributeError:
-                        # Fallback if READ_MEDIA_* permissions not available
-                        logger.warning("READ_MEDIA_* permissions not available, checking legacy")
-                        pass
-
-                # Legacy permissions for Android < 13
+                # For Android 9 and below, check for storage permissions
                 write_perm = check_permission(Permission.WRITE_EXTERNAL_STORAGE)
                 read_perm = check_permission(Permission.READ_EXTERNAL_STORAGE)
 
                 if write_perm and read_perm:
-                    logger.info("Storage permissions granted (Legacy)")
+                    logger.info("Storage permissions granted")
                     return True
                 else:
-                    logger.warning("Storage permissions not granted (Legacy)")
+                    logger.warning("Storage permissions not granted")
                     return False
 
             except Exception as e:
@@ -178,22 +162,42 @@ class PermissionsManager:
         """Get safe storage path for current Android version"""
         if platform == 'android':
             try:
-                # Try to use external storage (Downloads folder)
-                base_path = primary_external_storage_path()
-                downloads_path = os.path.join(base_path, 'Download')
+                from android import api_version
+                from android.permissions import check_permission, Permission
 
-                # Check if we can write to this location
-                if os.path.exists(downloads_path) and os.access(downloads_path, os.W_OK):
-                    logger.info(f"Using external Downloads path: {downloads_path}")
-                    return downloads_path
+                # On Android 10+ (API 29+), use app-specific external storage
+                # This doesn't require any permissions and files are visible to user
+                if api_version >= 29:
+                    # Check if we have legacy storage permission (Android 9 users upgrading)
+                    has_write_perm = check_permission(Permission.WRITE_EXTERNAL_STORAGE)
+
+                    if has_write_perm:
+                        # Try shared Downloads folder if we have permission
+                        base_path = primary_external_storage_path()
+                        downloads_path = os.path.join(base_path, 'Download')
+                        if os.path.exists(downloads_path) and os.access(downloads_path, os.W_OK):
+                            logger.info(f"Using shared Downloads path: {downloads_path}")
+                            return downloads_path
+
+                    # Use app-specific external storage (no permissions needed on Android 10+)
+                    app_path = app_storage_path()
+                    logger.info(f"Using app-specific storage (Android 10+): {app_path}")
+                    return app_path
                 else:
-                    # Fallback to app-specific external storage (doesn't require permission on Android 10+)
-                    logger.warning("Cannot access Downloads, using app storage")
-                    return app_storage_path()
+                    # Android 9 and below - try Downloads folder with permissions
+                    base_path = primary_external_storage_path()
+                    downloads_path = os.path.join(base_path, 'Download')
+
+                    if os.path.exists(downloads_path) and os.access(downloads_path, os.W_OK):
+                        logger.info(f"Using external Downloads path: {downloads_path}")
+                        return downloads_path
+                    else:
+                        logger.warning("Cannot access Downloads, using app storage")
+                        return app_storage_path()
 
             except Exception as e:
                 logger.error(f"Error getting storage path: {e}")
-                # Last resort: use app's internal storage
+                # Last resort: use app's storage
                 return app_storage_path()
         else:
             # Desktop platforms
@@ -1604,23 +1608,15 @@ SESSIONS COMPLETED:
                 if not PermissionsManager.check_storage_permissions():
                     logger.warning("Storage permissions not granted, requesting now...")
 
-                    # Request permissions - Android 15 compatible approach
+                    # Request storage permissions for Excel export
                     from android.permissions import request_permissions, Permission
-                    from android import api_version
 
-                    # Android 13+ (API 33+) uses new media permissions
-                    if api_version >= 33:
-                        request_permissions([
-                            Permission.READ_MEDIA_IMAGES,
-                            Permission.READ_MEDIA_VIDEO,
-                            Permission.READ_MEDIA_AUDIO,
-                        ])
-                    else:
-                        # Legacy permissions for older Android versions
-                        request_permissions([
-                            Permission.WRITE_EXTERNAL_STORAGE,
-                            Permission.READ_EXTERNAL_STORAGE,
-                        ])
+                    # Request storage permissions (works on all Android versions)
+                    # On Android 10+, if denied, app will use app-specific storage automatically
+                    request_permissions([
+                        Permission.WRITE_EXTERNAL_STORAGE,
+                        Permission.READ_EXTERNAL_STORAGE,
+                    ])
 
                     # Show beautiful permission dialog
                     from kivy.uix.boxlayout import BoxLayout
